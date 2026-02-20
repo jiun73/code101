@@ -1,0 +1,24 @@
+--- section principale ---
+
+demander un nombre entier i.
+effectuer les étapes de la section "est un nombre premier" avec x égal à i.
+afficher le résultat.
+
+--- ---
+
+--- section "est un nombre premier" ---
+
+Prérequis:
+- x, un nombre entier;
+Résultat:
+- vrai ou faux;
+
+Étape 1:
+    si x est égal à 0 ou x est égal à 1 alors le résultat est vrai, sinon déclarez un entier n égal à 2.
+
+Étape 2:
+    si x modulo n n'est pas égal à 0 alors incrémenter n et recommencer l'étape 2,
+    sauf si x est égal à n dans ce cas le résultat est vrai,
+    sinon le résultat est faux.
+
+--- ---
