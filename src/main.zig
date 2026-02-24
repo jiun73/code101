@@ -1,40 +1,26 @@
 const std = @import("std");
 const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
+const fns = @import("fns.zig");
 
 const CharFamilyType = struct {
-    discard: bool,
-    allowRepeat: bool,
-    codeBlock: bool,
-    blockEnd: ?u8 = null,
     chars: []const u8,
+    discard: bool = false,
+    allowRepeat: bool = false,
+    codeBlock: bool = false,
 };
 
 const charTypes: [10]CharFamilyType = .{
-    .{ .discard = true, .allowRepeat = true, .codeBlock = false, .chars = "\n \r" },
-    .{ .discard = true, .allowRepeat = true, .codeBlock = true, .chars = "\"", .blockEnd = '"' },
-    .{ .discard = true, .allowRepeat = true, .codeBlock = true, .chars = "(", .blockEnd = ')' },
-    .{ .discard = false, .allowRepeat = true, .codeBlock = false, .chars = "-" },
-    .{ .discard = false, .allowRepeat = false, .codeBlock = false, .chars = ":" },
-    .{ .discard = false, .allowRepeat = false, .codeBlock = false, .chars = ";" },
-    .{ .discard = false, .allowRepeat = false, .codeBlock = false, .chars = "." },
-    .{ .discard = false, .allowRepeat = false, .codeBlock = false, .chars = "," },
-    .{ .discard = false, .allowRepeat = true, .codeBlock = false, .chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZéà'ÉÀ" },
-    .{ .discard = false, .allowRepeat = true, .codeBlock = false, .chars = "0123456789" },
+    .{ .chars = "\n \r", .discard = true, .allowRepeat = true },
+    .{ .chars = "\"\"", .codeBlock = true },
+    .{ .chars = "()", .discard = true, .allowRepeat = true, .codeBlock = true },
+    .{ .chars = "-", .allowRepeat = true },
+    .{ .chars = ":" },
+    .{ .chars = ";" },
+    .{ .chars = "." },
+    .{ .chars = "," },
+    .{ .chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZéà'ÉÀ", .allowRepeat = true },
+    .{ .chars = "0123456789", .allowRepeat = true },
 };
-
-const sectionDeclaration = .{ "---", "section", "[*sec]", "---" };
-const sectionEnd = .{ "---", "---" };
-const argDeclStart = .{ "Prérequis", ":" };
-const argDeclStmnt = .{ "-", "[*var]", ",", "un", "[*type]", ";" };
-const retVal = .{ "Résultat", ":", "-", "[*type]", ";" };
-const stepDecl = .{ "Étape", "[*num]", ":" };
-
-pub fn sectionLabel(str: [][]const u8) ?u8 {
-    if (str.len < 2) return null;
-    if (std.mem.eql(u8, str[0], "principal")) return 1;
-    if (str[0][0] == '"' and str[0][str[0].len - 1] == '"') return 1;
-    return null;
-}
 
 pub fn matchTemp(_: []const u8) bool {
     return true;
@@ -42,10 +28,6 @@ pub fn matchTemp(_: []const u8) bool {
 
 pub fn matchParagraph(_: []const u8) bool {
     return true;
-}
-
-pub fn any(_: [][]const u8) ?u8 {
-    return 0;
 }
 
 const ASTNode = struct {};
@@ -60,44 +42,70 @@ const masterNode: SyntaxTreeNode = .{
     },
 };
 
-pub fn ParagrahNode(comptime next: []const SyntaxTreeNode) type {
+pub fn paragrahNode(comptime next: []const SyntaxTreeNode) SyntaxTreeNode {
     return .{
-        .match = SyntaxTreeNode.Eq("---").fun,
-        .type = .Section,
-        .next = &.{},
+        .match = &.{SyntaxTreeNode.any},
+        .next = next,
     };
 }
 
-const sectionNode: SyntaxTreeNode = .{
-    .match = SyntaxTreeNode.Eq("---").fun,
-    .type = .Section,
+const sectionNode = SyntaxTreeNode{
+    .match = &.{
+        fns.Eq("---").fun,
+        fns.Eq("section").fun,
+        fns.sectionLabel,
+        fns.Eq("---").fun,
+    },
     .next = &.{
-        .{
-            .match = SyntaxTreeNode.Eq("section").fun,
-            .next = &.{
-                .{
-                    .match = sectionLabel,
-                    .next = &.{
-                        .match = SyntaxTreeNode.Eq("---").fun,
-                        .next = &.{
-                            .{
-                                .match = matchParagraph,
-                                .next = &.{
-                                    .match = SyntaxTreeNode.Eq("---").eq,
-                                    .next = &.{ .match = SyntaxTreeNode.Eq("---").eq, .next = ParagrahNode(&.{}) },
-                                },
-                            },
-                        },
-                    },
+        paragrahNode(&.{
+            SyntaxTreeNode{
+                .match = &.{
+                    fns.Eq("---").fun,
+                    fns.Eq("---").fun,
                 },
+                .next = &.{SyntaxTreeNode{ .loopback = 0 }},
+                .end = true,
             },
-        },
+        }),
     },
 };
 
-pub fn traverseNode(node: SyntaxTreeNode, tokens: [][]const u8) !u8 {
+const loopbackNodes = .{
+    sectionNode,
+};
+
+const MatchError = error{ OutOfTokens, DoesNotMatch };
+
+pub fn isMatchNode(node: SyntaxTreeNode, tokens: [][]const u8) MatchError![][]const u8 {
+    std.debug.print("matching : {any}\n", .{node.match.len});
+    for (node.match, 0..) |match, i| {
+        if (i >= tokens.len) return MatchError.OutOfTokens;
+        const tok = tokens[i];
+        std.debug.print("[{s}]\n", .{tok});
+        if (!match(tok)) {
+            std.debug.print("not a match\n", .{});
+            return MatchError.DoesNotMatch;
+        }
+    }
+    return tokens[node.match.len..];
+}
+
+pub fn traverseNode(node: SyntaxTreeNode, tokens: [][]const u8) MatchError!void {
     for (node.next) |next| {
-        // next.
+        const result = isMatchNode(next, tokens);
+
+        if (result) |slc| {
+            for (tokens[0 .. tokens.len - slc.len]) |str| {
+                std.debug.print("{s} : {any}\n", .{ str, tokens.len });
+            }
+
+            try traverseNode(next, slc);
+        } else |err| {
+            switch (err) {
+                error.DoesNotMatch => continue,
+                error.OutOfTokens => return MatchError.OutOfTokens,
+            }
+        }
     }
 }
 
@@ -112,17 +120,20 @@ pub fn isoneof(char: u8, list: []const u8) bool {
 
 pub fn getfam(char: u8) ?*const CharFamilyType {
     for (&charTypes) |*charType| {
-        if (isoneof(char, charType.chars)) return charType;
+        if (charType.codeBlock) {
+            if (char == charType.chars[0]) return charType;
+        } else if (isoneof(char, charType.chars)) {
+            return charType;
+        }
     }
     return null;
 }
 
-pub fn tokenize(file: []u8, gpa: std.mem.Allocator) void {
+pub fn tokenize(file: []u8, tokens: *std.ArrayList([]const u8), gpa: std.mem.Allocator) void {
     var i: usize = 0;
     var s: usize = 0;
 
-    var tokens = std.ArrayList([]const u8).initCapacity(gpa, 128) catch @panic("OOM");
-    defer tokens.deinit(gpa);
+    std.debug.print("{any}\n", .{sectionNode});
 
     var cfam: ?*const CharFamilyType = null;
 
@@ -154,7 +165,7 @@ pub fn tokenize(file: []u8, gpa: std.mem.Allocator) void {
             i += 1;
 
             if (cfam.?.codeBlock) {
-                while (file[i] != cfam.?.blockEnd) {
+                while (file[i] != cfam.?.chars[1]) {
                     i += 1;
                 }
                 i += 1;
@@ -188,7 +199,10 @@ pub fn compile(path: [:0]const u8) !void {
 
     if (file_contents) |file| {
         defer gpa.free(file); // Remember to free the allocated memory
-        tokenize(file, gpa);
+        var tokens = std.ArrayList([]const u8).initCapacity(gpa, 128) catch @panic("OOM");
+        defer tokens.deinit(gpa);
+        tokenize(file, &tokens, gpa);
+        try traverseNode(masterNode, tokens.items);
     } else |err| switch (err) {
         error.FileNotFound => {
             std.debug.print("Error: File not found", .{});
