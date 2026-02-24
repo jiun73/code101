@@ -1,37 +1,26 @@
 const std = @import("std");
-
-const CharTypes = enum {
-    Control,
-    Word,
-    Numerical,
-};
-
-const stringChar = "\"";
-const commentOpenChar = "(";
-const commentCloseChar = ")";
+const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
 
 const CharFamilyType = struct {
     discard: bool,
     allowRepeat: bool,
     codeBlock: bool,
-    blockEnd: ?u8,
+    blockEnd: ?u8 = null,
     chars: []const u8,
 };
 
 const charTypes: [10]CharFamilyType = .{
-    .{ .discard = true, .allowRepeat = true, .codeBlock = false, .chars = "\n \r", .blockEnd = null },
+    .{ .discard = true, .allowRepeat = true, .codeBlock = false, .chars = "\n \r" },
     .{ .discard = true, .allowRepeat = true, .codeBlock = true, .chars = "\"", .blockEnd = '"' },
     .{ .discard = true, .allowRepeat = true, .codeBlock = true, .chars = "(", .blockEnd = ')' },
-    .{ .discard = false, .allowRepeat = true, .codeBlock = false, .chars = "-", .blockEnd = null },
-    .{ .discard = false, .allowRepeat = false, .codeBlock = false, .chars = ":", .blockEnd = null },
-    .{ .discard = false, .allowRepeat = false, .codeBlock = false, .chars = ";", .blockEnd = null },
-    .{ .discard = false, .allowRepeat = false, .codeBlock = false, .chars = ".", .blockEnd = null },
-    .{ .discard = false, .allowRepeat = false, .codeBlock = false, .chars = ",", .blockEnd = null },
-    .{ .discard = false, .allowRepeat = true, .codeBlock = false, .chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZéà'ÉÀ", .blockEnd = null },
-    .{ .discard = false, .allowRepeat = true, .codeBlock = false, .chars = "0123456789", .blockEnd = null },
+    .{ .discard = false, .allowRepeat = true, .codeBlock = false, .chars = "-" },
+    .{ .discard = false, .allowRepeat = false, .codeBlock = false, .chars = ":" },
+    .{ .discard = false, .allowRepeat = false, .codeBlock = false, .chars = ";" },
+    .{ .discard = false, .allowRepeat = false, .codeBlock = false, .chars = "." },
+    .{ .discard = false, .allowRepeat = false, .codeBlock = false, .chars = "," },
+    .{ .discard = false, .allowRepeat = true, .codeBlock = false, .chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZéà'ÉÀ" },
+    .{ .discard = false, .allowRepeat = true, .codeBlock = false, .chars = "0123456789" },
 };
-
-const whitespaceChars = "\n \r";
 
 const sectionDeclaration = .{ "---", "section", "[*sec]", "---" };
 const sectionEnd = .{ "---", "---" };
@@ -40,32 +29,77 @@ const argDeclStmnt = .{ "-", "[*var]", ",", "un", "[*type]", ";" };
 const retVal = .{ "Résultat", ":", "-", "[*type]", ";" };
 const stepDecl = .{ "Étape", "[*num]", ":" };
 
-const SyntaxTreeExprType = enum {
-    Strict,
-    SectionLabel,
-    Variable,
-    Type,
-    StepNumber,
+pub fn sectionLabel(str: [][]const u8) ?u8 {
+    if (str.len < 2) return null;
+    if (std.mem.eql(u8, str[0], "principal")) return 1;
+    if (str[0][0] == '"' and str[0][str[0].len - 1] == '"') return 1;
+    return null;
+}
+
+pub fn matchTemp(_: []const u8) bool {
+    return true;
+}
+
+pub fn matchParagraph(_: []const u8) bool {
+    return true;
+}
+
+pub fn any(_: [][]const u8) ?u8 {
+    return 0;
+}
+
+const ASTNode = struct {};
+
+const ASTBuilder = struct {
+    gpa: std.mem.Allocator,
 };
 
-const SyntaxTreeControlType = enum {
-    Ambigious,
-    SectionStart,
-    SectionEnd,
-    StepDecl,
-    ArgsDecl,
-    SentenceStart,
-    SentenceEnd,
+const masterNode: SyntaxTreeNode = .{
+    .next = &.{
+        sectionNode,
+    },
 };
 
-const SyntaxTreeNode = struct {
-    type: SyntaxTreeExprType = .Strict,
-    str: ?[]const u8 = null,
-    next: []const SyntaxTreeNode = .{},
-    control: SyntaxTreeControlType = .Ambigious,
+pub fn ParagrahNode(comptime next: []const SyntaxTreeNode) type {
+    return .{
+        .match = SyntaxTreeNode.Eq("---").fun,
+        .type = .Section,
+        .next = &.{},
+    };
+}
+
+const sectionNode: SyntaxTreeNode = .{
+    .match = SyntaxTreeNode.Eq("---").fun,
+    .type = .Section,
+    .next = &.{
+        .{
+            .match = SyntaxTreeNode.Eq("section").fun,
+            .next = &.{
+                .{
+                    .match = sectionLabel,
+                    .next = &.{
+                        .match = SyntaxTreeNode.Eq("---").fun,
+                        .next = &.{
+                            .{
+                                .match = matchParagraph,
+                                .next = &.{
+                                    .match = SyntaxTreeNode.Eq("---").eq,
+                                    .next = &.{ .match = SyntaxTreeNode.Eq("---").eq, .next = ParagrahNode(&.{}) },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
 };
 
-const testNode: SyntaxTreeNode = .{ .str = "---", .next = .{} };
+pub fn traverseNode(node: SyntaxTreeNode, tokens: [][]const u8) !u8 {
+    for (node.next) |next| {
+        // next.
+    }
+}
 
 pub fn isoneof(char: u8, list: []const u8) bool {
     var i: usize = 0;
@@ -74,10 +108,6 @@ pub fn isoneof(char: u8, list: []const u8) bool {
         i += 1;
     }
     return false;
-}
-
-pub fn isws(char: u8) bool {
-    return isoneof(char, whitespaceChars);
 }
 
 pub fn getfam(char: u8) ?*const CharFamilyType {
@@ -115,7 +145,7 @@ pub fn tokenize(file: []u8, gpa: std.mem.Allocator) void {
         if ((!cfam.?.allowRepeat) or cfam != fam) {
             if (!cfam.?.discard) {
                 const token = file[s..i];
-                std.debug.print("[{s}]", .{token});
+                std.debug.print("[{s}]\n", .{token});
                 tokens.append(gpa, token) catch @panic("OOM");
             }
 
@@ -141,7 +171,7 @@ pub fn tokenize(file: []u8, gpa: std.mem.Allocator) void {
 
     if (!cfam.?.discard) {
         const token = file[s..i];
-        std.debug.print("[{s}]", .{token});
+        std.debug.print("[{s}]\n", .{token});
         tokens.append(gpa, token) catch @panic("OOM");
     }
 }
