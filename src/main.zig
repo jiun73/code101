@@ -37,36 +37,45 @@ const ASTBuilder = struct {
 };
 
 const masterNode: SyntaxTreeNode = .{
+    .debug = "master",
+    .loopback = .Master,
     .next = &.{
         sectionNode,
     },
 };
 
-pub fn paragrahNode(comptime next: []const SyntaxTreeNode) SyntaxTreeNode {
-    return .{
-        .match = &.{SyntaxTreeNode.any},
-        .next = next,
-    };
-}
+const paragrahNode = SyntaxTreeNode{
+    .debug = "paragrah",
+    .match = &.{SyntaxTreeNode.any},
+    .loopback = .Self,
+    .next = &.{
+        SyntaxTreeNode{ .loopback = .JumpPrevious },
+    },
+};
 
 const sectionNode = SyntaxTreeNode{
+    .debug = "section",
     .match = &.{
         fns.Eq("---").fun,
         fns.Eq("section").fun,
         fns.sectionLabel,
         fns.Eq("---").fun,
     },
+    .loopback = .Next,
     .next = &.{
-        paragrahNode(&.{
+        paragrahNode,
+    },
+    .lbnext = &SyntaxTreeNode{
+        .debug = "section_end",
+        .next = &.{
             SyntaxTreeNode{
                 .match = &.{
                     fns.Eq("---").fun,
                     fns.Eq("---").fun,
                 },
-                .next = &.{SyntaxTreeNode{ .loopback = 0 }},
-                .end = true,
+                .next = &.{SyntaxTreeNode{ .loopback = .Jump }},
             },
-        }),
+        },
     },
 };
 
@@ -77,7 +86,11 @@ const loopbackNodes = .{
 const MatchError = error{ OutOfTokens, DoesNotMatch };
 
 pub fn isMatchNode(node: SyntaxTreeNode, tokens: [][]const u8) MatchError![][]const u8 {
-    std.debug.print("matching : {any}\n", .{node.match.len});
+    if (node.match.len == 0) return &.{};
+    if (node.debug != null) {
+        std.debug.print("matching '{s}' with \n", .{node.debug.?});
+    }
+
     for (node.match, 0..) |match, i| {
         if (i >= tokens.len) return MatchError.OutOfTokens;
         const tok = tokens[i];
@@ -87,25 +100,69 @@ pub fn isMatchNode(node: SyntaxTreeNode, tokens: [][]const u8) MatchError![][]co
             return MatchError.DoesNotMatch;
         }
     }
-    return tokens[node.match.len..];
+    return tokens[0..node.match.len];
 }
 
-pub fn traverseNode(node: SyntaxTreeNode, tokens: [][]const u8) MatchError!void {
-    for (node.next) |next| {
-        const result = isMatchNode(next, tokens);
+pub fn traverseNode(startNode: SyntaxTreeNode, startTokens: [][]const u8, gpa: std.mem.Allocator) !void {
+    var tokens = startTokens;
+    var currentNode: *const SyntaxTreeNode = &startNode;
+    var loopbackStack = std.ArrayList(*const SyntaxTreeNode).initCapacity(gpa, 32) catch @panic("OOM");
+    defer loopbackStack.deinit(gpa);
 
-        if (result) |slc| {
-            for (tokens[0 .. tokens.len - slc.len]) |str| {
-                std.debug.print("{s} : {any}\n", .{ str, tokens.len });
-            }
+    mainloop: while (true) {
+        if (currentNode.debug != null) {
+            std.debug.print("current node: {s}\n", .{currentNode.debug.?});
+        }
 
-            try traverseNode(next, slc);
-        } else |err| {
-            switch (err) {
-                error.DoesNotMatch => continue,
-                error.OutOfTokens => return MatchError.OutOfTokens,
+        try switch (currentNode.loopback) {
+            .Next => loopbackStack.append(gpa, currentNode.lbnext orelse return MatchError.DoesNotMatch),
+            .Self => loopbackStack.append(gpa, currentNode),
+            .Master => loopbackStack.append(gpa, currentNode),
+            .Jump => {
+                std.debug.print("jump\n", .{});
+                const last = loopbackStack.pop() orelse return MatchError.DoesNotMatch;
+                currentNode = last;
+                continue :mainloop;
+            },
+            .JumpPrevious => {
+                std.debug.print("jump previous\n", .{});
+                _ = loopbackStack.pop();
+                currentNode = loopbackStack.pop() orelse return MatchError.DoesNotMatch;
+                continue :mainloop;
+            },
+            .None => {},
+        };
+
+        for (currentNode.next) |next| {
+            const result_err = isMatchNode(next, tokens);
+
+            if (result_err) |result| {
+                std.debug.print("match found. proceed\n", .{});
+
+                tokens = tokens[result.len..];
+                currentNode = &next;
+                continue :mainloop;
+            } else |err| {
+                if (err == error.OutOfTokens) return err;
+
+                std.debug.print("checking next...\n", .{});
+                continue;
             }
         }
+
+        if (tokens.len == 0) {
+            if (currentNode.loopback == .Master) {
+                return;
+            } else {
+                return MatchError.OutOfTokens;
+            }
+        }
+
+        if (currentNode.debug != null) {
+            std.debug.print("no match found for node {s}. exiting\n", .{currentNode.debug.?});
+        }
+
+        return MatchError.DoesNotMatch;
     }
 }
 
@@ -202,7 +259,7 @@ pub fn compile(path: [:0]const u8) !void {
         var tokens = std.ArrayList([]const u8).initCapacity(gpa, 128) catch @panic("OOM");
         defer tokens.deinit(gpa);
         tokenize(file, &tokens, gpa);
-        try traverseNode(masterNode, tokens.items);
+        try traverseNode(masterNode, tokens.items, gpa);
     } else |err| switch (err) {
         error.FileNotFound => {
             std.debug.print("Error: File not found", .{});

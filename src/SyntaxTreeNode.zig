@@ -2,6 +2,15 @@ const std = @import("std");
 
 const SyntaxTreeNode = @This();
 
+const LoopType = enum {
+    None,
+    Master,
+    Self,
+    Next,
+    Jump,
+    JumpPrevious,
+};
+
 pub const MatchFn = *const fn ([]const u8) bool;
 pub const BuildFn = *const fn ([]const u8) bool;
 
@@ -9,8 +18,9 @@ pub fn any(_: []const u8) bool {
     return true;
 }
 
-loopback: ?usize = null,
-match: []const MatchFn = &.{any},
+debug: ?[:0]const u8 = null,
+match: []const MatchFn = &.{},
 build: ?BuildFn = null,
 next: []const SyntaxTreeNode = &.{},
-end: bool = false
+loopback: LoopType = .None,
+lbnext: ?*const SyntaxTreeNode = null,
