@@ -1,6 +1,7 @@
 const std = @import("std");
 const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
 const fns = @import("fns.zig");
+const nodes = @import("nodes.zig");
 
 const CharFamilyType = struct {
     chars: []const u8,
@@ -22,68 +23,8 @@ const charTypes: [10]CharFamilyType = .{
     .{ .chars = "0123456789", .allowRepeat = true },
 };
 
-pub fn matchTemp(_: []const u8) bool {
-    return true;
-}
-
-pub fn matchParagraph(_: []const u8) bool {
-    return true;
-}
-
-const ASTNode = struct {};
-
-const ASTBuilder = struct {
-    gpa: std.mem.Allocator,
-};
-
-const masterNode: SyntaxTreeNode = .{
-    .debug = "master",
-    .loopback = .Master,
-    .next = &.{
-        sectionNode,
-    },
-};
-
-const paragrahNode = SyntaxTreeNode{
-    .debug = "paragrah",
-    .match = &.{SyntaxTreeNode.any},
-    .loopback = .Self,
-    .next = &.{
-        SyntaxTreeNode{ .loopback = .JumpPrevious },
-    },
-};
-
-const sectionNode = SyntaxTreeNode{
-    .debug = "section",
-    .match = &.{
-        fns.Eq("---").fun,
-        fns.Eq("section").fun,
-        fns.sectionLabel,
-        fns.Eq("---").fun,
-    },
-    .loopback = .Next,
-    .next = &.{
-        paragrahNode,
-    },
-    .lbnext = &SyntaxTreeNode{
-        .debug = "section_end",
-        .next = &.{
-            SyntaxTreeNode{
-                .match = &.{
-                    fns.Eq("---").fun,
-                    fns.Eq("---").fun,
-                },
-                .next = &.{SyntaxTreeNode{ .loopback = .Jump }},
-            },
-        },
-    },
-};
-
-const loopbackNodes = .{
-    sectionNode,
-};
-
 const MatchError = error{ OutOfTokens, DoesNotMatch };
+const CompilerError = error{ NoLbNextNode, InvalidStackPop };
 
 pub fn isMatchNode(node: SyntaxTreeNode, tokens: [][]const u8) MatchError![][]const u8 {
     if (node.match.len == 0) return &.{};
@@ -94,13 +35,22 @@ pub fn isMatchNode(node: SyntaxTreeNode, tokens: [][]const u8) MatchError![][]co
     for (node.match, 0..) |match, i| {
         if (i >= tokens.len) return MatchError.OutOfTokens;
         const tok = tokens[i];
-        std.debug.print("[{s}]\n", .{tok});
+        std.debug.print("[{s}]", .{tok});
         if (!match(tok)) {
-            std.debug.print("not a match\n", .{});
+            std.debug.print(" => X\n", .{});
             return MatchError.DoesNotMatch;
         }
     }
+    std.debug.print(" => Y\n", .{});
     return tokens[0..node.match.len];
+}
+
+fn printstack(loopbackStack: std.ArrayList(*const SyntaxTreeNode)) void {
+    std.debug.print("stack:", .{});
+    for (loopbackStack.items) |item| {
+        std.debug.print("[{?s}]", .{item.debug});
+    }
+    std.debug.print("\n", .{});
 }
 
 pub fn traverseNode(startNode: SyntaxTreeNode, startTokens: [][]const u8, gpa: std.mem.Allocator) !void {
@@ -111,50 +61,60 @@ pub fn traverseNode(startNode: SyntaxTreeNode, startTokens: [][]const u8, gpa: s
 
     mainloop: while (true) {
         if (currentNode.debug != null) {
-            std.debug.print("current node: {s}\n", .{currentNode.debug.?});
-        }
-
-        try switch (currentNode.loopback) {
-            .Next => loopbackStack.append(gpa, currentNode.lbnext orelse return MatchError.DoesNotMatch),
-            .Self => loopbackStack.append(gpa, currentNode),
-            .Master => loopbackStack.append(gpa, currentNode),
-            .Jump => {
-                std.debug.print("jump\n", .{});
-                const last = loopbackStack.pop() orelse return MatchError.DoesNotMatch;
-                currentNode = last;
-                continue :mainloop;
-            },
-            .JumpPrevious => {
-                std.debug.print("jump previous\n", .{});
-                _ = loopbackStack.pop();
-                currentNode = loopbackStack.pop() orelse return MatchError.DoesNotMatch;
-                continue :mainloop;
-            },
-            .None => {},
-        };
-
-        for (currentNode.next) |next| {
-            const result_err = isMatchNode(next, tokens);
-
-            if (result_err) |result| {
-                std.debug.print("match found. proceed\n", .{});
-
-                tokens = tokens[result.len..];
-                currentNode = &next;
-                continue :mainloop;
-            } else |err| {
-                if (err == error.OutOfTokens) return err;
-
-                std.debug.print("checking next...\n", .{});
-                continue;
-            }
+            std.debug.print("current node: {s} ({any} tokens)\n", .{ currentNode.debug.?, tokens.len });
         }
 
         if (tokens.len == 0) {
-            if (currentNode.loopback == .Master) {
+            if (currentNode.loopback == .Master or currentNode.loopback == .End) {
                 return;
             } else {
                 return MatchError.OutOfTokens;
+            }
+        }
+
+        try switch (currentNode.loopback) {
+            .Next => {
+                std.debug.print("lbnext:{?s} - ", .{currentNode.lbnext.?.debug});
+                try loopbackStack.append(gpa, currentNode.lbnext orelse return CompilerError.NoLbNextNode);
+                printstack(loopbackStack);
+            },
+            .Self => {
+                std.debug.print("lb:{?s} - ", .{currentNode.debug});
+                try loopbackStack.append(gpa, currentNode);
+                printstack(loopbackStack);
+            },
+            .Master => loopbackStack.append(gpa, currentNode),
+            .Jump => {
+                const last = loopbackStack.pop() orelse return CompilerError.InvalidStackPop;
+                currentNode = last;
+                std.debug.print("jump => [{?s}] - ", .{currentNode.debug});
+                printstack(loopbackStack);
+                continue :mainloop;
+            },
+            .JumpPrevious => {
+                _ = loopbackStack.pop();
+                currentNode = loopbackStack.pop() orelse return CompilerError.InvalidStackPop;
+                std.debug.print("popjump => [{?s}] - ", .{currentNode.debug});
+                printstack(loopbackStack);
+                continue :mainloop;
+            },
+            .None => {},
+            .End => {},
+        };
+
+        for (currentNode.next) |*next| {
+            const result_err = isMatchNode(next.*, tokens);
+
+            if (result_err) |result| {
+                tokens = tokens[result.len..];
+                currentNode = next;
+                if (currentNode.build != null) {
+                    currentNode.build.?(.{ .gpa = gpa }, result);
+                }
+                continue :mainloop;
+            } else |_| {
+                std.debug.print("checking next...\n", .{});
+                continue;
             }
         }
 
@@ -190,8 +150,6 @@ pub fn tokenize(file: []u8, tokens: *std.ArrayList([]const u8), gpa: std.mem.All
     var i: usize = 0;
     var s: usize = 0;
 
-    std.debug.print("{any}\n", .{sectionNode});
-
     var cfam: ?*const CharFamilyType = null;
 
     while (i < file.len) {
@@ -213,7 +171,7 @@ pub fn tokenize(file: []u8, tokens: *std.ArrayList([]const u8), gpa: std.mem.All
         if ((!cfam.?.allowRepeat) or cfam != fam) {
             if (!cfam.?.discard) {
                 const token = file[s..i];
-                std.debug.print("[{s}]\n", .{token});
+                //std.debug.print("[{s}]\n", .{token});
                 tokens.append(gpa, token) catch @panic("OOM");
             }
 
@@ -228,7 +186,7 @@ pub fn tokenize(file: []u8, tokens: *std.ArrayList([]const u8), gpa: std.mem.All
                 i += 1;
                 const token = file[s..i];
                 i -= 1;
-                std.debug.print("[{s}]\n", .{token});
+                //std.debug.print("[{s}]\n", .{token});
                 tokens.append(gpa, token) catch @panic("OOM");
                 cfam = null;
                 s = i;
@@ -239,7 +197,7 @@ pub fn tokenize(file: []u8, tokens: *std.ArrayList([]const u8), gpa: std.mem.All
 
     if (!cfam.?.discard) {
         const token = file[s..i];
-        std.debug.print("[{s}]\n", .{token});
+        //std.debug.print("[{s}]\n", .{token});
         tokens.append(gpa, token) catch @panic("OOM");
     }
 }
@@ -259,7 +217,7 @@ pub fn compile(path: [:0]const u8) !void {
         var tokens = std.ArrayList([]const u8).initCapacity(gpa, 128) catch @panic("OOM");
         defer tokens.deinit(gpa);
         tokenize(file, &tokens, gpa);
-        try traverseNode(masterNode, tokens.items, gpa);
+        try traverseNode(nodes.masterNode, tokens.items, gpa);
     } else |err| switch (err) {
         error.FileNotFound => {
             std.debug.print("Error: File not found", .{});

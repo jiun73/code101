@@ -1,7 +1,7 @@
---- section principale --- test --- ---
+--- section principale ---
 
-demander un nombre entier i.
-effectuer les étapes de la section "est un nombre premier" avec x égal à i.
+demander un nombre entier i et
+effectuer les étapes de la section "est un nombre premier" avec x égal à i et
 afficher le résultat.
 
 --- ---

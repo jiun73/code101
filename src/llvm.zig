@@ -33,6 +33,10 @@ pub const Module = struct {
         return .create(fun, t);
     }
 
+    pub fn getFn(module: Module, name: [*:0]const u8) Function {
+        return .toZig(core.LLVMGetNamedFunction(module.ref, name));
+    }
+
     pub fn toZig(ref: types.LLVMModuleRef) Module {
         return .{ .ref = ref };
     }

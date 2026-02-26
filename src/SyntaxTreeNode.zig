@@ -1,10 +1,12 @@
 const std = @import("std");
+const AST = @import("ast.zig");
 
 const SyntaxTreeNode = @This();
 
 const LoopType = enum {
     None,
     Master,
+    End,
     Self,
     Next,
     Jump,
@@ -12,7 +14,7 @@ const LoopType = enum {
 };
 
 pub const MatchFn = *const fn ([]const u8) bool;
-pub const BuildFn = *const fn ([]const u8) bool;
+pub const BuildFn = *const fn (builder: AST.Builder, [][]const u8) void;
 
 pub fn any(_: []const u8) bool {
     return true;
