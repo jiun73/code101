@@ -1,6 +1,7 @@
 --- section principale ---
 
 afficher le message "bonjour monde" et
+afficher le message "bonjour monde2" et
 déclarer un nombre entier i égal à 1 et
 afficher i.
  

@@ -20,7 +20,7 @@ pub fn buildPrintMessage(b: AST.Builder, tokens: [][]const u8) void {
     defer b.gpa.free(message_nt);
     const str = b.builder.globalStringPtr(message_nt, "message");
 
-    _ = b.builder.call(printf.getWithType(), &.{ fmt, str }, "t");
+    _ = b.builder.call(printf.getWithType(), &.{ fmt, str }, "");
 }
 
 pub const phraseNode = SyntaxTreeNode{
