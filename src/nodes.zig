@@ -2,6 +2,7 @@ const std = @import("std");
 const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
 const fns = @import("fns.zig");
 const AST = @import("ast.zig");
+const llvm = @import("llvm.zig");
 
 pub const masterNode: SyntaxTreeNode = .{
     .debug = "master",
@@ -10,6 +11,17 @@ pub const masterNode: SyntaxTreeNode = .{
         sectionNode,
     },
 };
+
+pub fn buildPrintMessage(b: AST.Builder, tokens: [][]const u8) void {
+    const message = tokens[3];
+    const printf = b.module.getFn("printf");
+    const fmt = b.module.getGlobal("fmt_s");
+    const message_nt = b.gpa.dupeZ(u8, message) catch @panic("OOM");
+    defer b.gpa.free(message_nt);
+    const str = b.builder.globalStringPtr(message_nt, "message");
+
+    _ = b.builder.call(printf.getWithType(), &.{ fmt, str }, "t");
+}
 
 pub const phraseNode = SyntaxTreeNode{
     .debug = "phrase",
@@ -27,6 +39,18 @@ pub const phraseNode = SyntaxTreeNode{
                         fns.Eq("entier").fun,
                         fns.variable,
                     },
+                    .next = &.{
+                        SyntaxTreeNode{ .loopback = .Jump },
+                    },
+                },
+                SyntaxTreeNode{
+                    .match = &.{
+                        fns.Eq("afficher").fun,
+                        fns.Eq("le").fun,
+                        fns.Eq("message").fun,
+                        fns.string,
+                    },
+                    .build = buildPrintMessage,
                     .next = &.{
                         SyntaxTreeNode{ .loopback = .Jump },
                     },
@@ -95,8 +119,14 @@ pub const phraseNode = SyntaxTreeNode{
     },
 };
 
-pub fn buildSectionFn(_: AST.Builder, _: [][]const u8) void {
-    std.debug.print("build section fn\n", .{});
+pub fn buildSectionFn(b: AST.Builder, tokens: [][]const u8) void {
+    const fnName = tokens[2];
+
+    if (std.mem.eql(u8, fnName, "principale")) {
+        const fun = b.module.addFnCreateType("main", llvm.Type.Int32(), &.{ llvm.Type.Int32(), llvm.Type.Int8().Ptr().Ptr() }, false);
+        const entry = fun.appendBasicBlock("entry");
+        b.builder.positionAtEnd(entry);
+    } else {}
 }
 
 pub const sectionNode = SyntaxTreeNode{

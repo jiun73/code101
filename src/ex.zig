@@ -16,6 +16,10 @@ pub fn e() void {
     const module = b.Module.create("test");
 
     const printf_fn = module.addFnCreateType("printf", b.Type.Int8(), &.{b.Type.Int8().Ptr()}, true);
+
+    std.debug.print("{s}\n", .{core.LLVMPrintValueToString(printf_fn.fun.toC())});
+    std.debug.print("{s}\n", .{core.LLVMPrintTypeToString(printf_fn.t.toC())});
+
     const main_fn = module.addFnCreateType("main", b.Type.Int32(), &.{ b.Type.Int32(), b.Type.Int8().Ptr().Ptr() }, false);
 
     const entry = main_fn.appendBasicBlock("entry");
@@ -29,7 +33,12 @@ pub fn e() void {
 
     const first_cmd = builder.load(b.Type.Int8().Ptr(), arg2, "str_cmd");
 
-    _ = builder.call(printf_fn, &.{ str, arg1 }, "test");
+    const ttt = module.getFn("printf");
+
+    std.debug.print("ttt: {s}\n", .{core.LLVMPrintValueToString(ttt.toC())});
+    std.debug.print("2: {s}\n", .{core.LLVMPrintTypeToString(ttt.getType().toC())});
+
+    _ = builder.call(ttt.getWithType(), &.{ str, arg1 }, "test");
     _ = builder.call(printf_fn, &.{ str2, first_cmd }, "test2");
 
     //const sum = builder.buildAdd(arg1, arg2, "sum");

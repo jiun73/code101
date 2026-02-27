@@ -2,6 +2,8 @@ const std = @import("std");
 const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
 const fns = @import("fns.zig");
 const nodes = @import("nodes.zig");
+const AST = @import("ast.zig");
+const ex = @import("ex.zig");
 
 const CharFamilyType = struct {
     chars: []const u8,
@@ -53,7 +55,7 @@ fn printstack(loopbackStack: std.ArrayList(*const SyntaxTreeNode)) void {
     std.debug.print("\n", .{});
 }
 
-pub fn traverseNode(startNode: SyntaxTreeNode, startTokens: [][]const u8, gpa: std.mem.Allocator) !void {
+pub fn traverseNode(b: AST.Builder, startNode: SyntaxTreeNode, startTokens: [][]const u8, gpa: std.mem.Allocator) !void {
     var tokens = startTokens;
     var currentNode: *const SyntaxTreeNode = &startNode;
     var loopbackStack = std.ArrayList(*const SyntaxTreeNode).initCapacity(gpa, 32) catch @panic("OOM");
@@ -109,7 +111,7 @@ pub fn traverseNode(startNode: SyntaxTreeNode, startTokens: [][]const u8, gpa: s
                 tokens = tokens[result.len..];
                 currentNode = next;
                 if (currentNode.build != null) {
-                    currentNode.build.?(.{ .gpa = gpa }, result);
+                    currentNode.build.?(b, result);
                 }
                 continue :mainloop;
             } else |_| {
@@ -217,7 +219,10 @@ pub fn compile(path: [:0]const u8) !void {
         var tokens = std.ArrayList([]const u8).initCapacity(gpa, 128) catch @panic("OOM");
         defer tokens.deinit(gpa);
         tokenize(file, &tokens, gpa);
-        try traverseNode(nodes.masterNode, tokens.items, gpa);
+        const b = AST.Builder.create(gpa);
+        try traverseNode(b, nodes.masterNode, tokens.items, gpa);
+
+        b.module.dump();
     } else |err| switch (err) {
         error.FileNotFound => {
             std.debug.print("Error: File not found", .{});
@@ -235,6 +240,7 @@ pub fn compile(path: [:0]const u8) !void {
 }
 
 pub fn main() !void {
+    ex.e();
     var general_allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = general_allocator.deinit();
     const gpa = general_allocator.allocator();

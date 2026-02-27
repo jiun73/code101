@@ -1,7 +1,10 @@
 const llvm = @import("llvm");
-const target = llvm.target;
-const types = llvm.types;
-const core = llvm.core;
+const std = @import("std");
+pub const target = llvm.target;
+pub const types = llvm.types;
+pub const core = llvm.core;
+pub const error_handling = llvm.error_handling;
+pub const errors = llvm.errors;
 
 pub const Module = struct {
     ref: types.LLVMModuleRef,
@@ -35,6 +38,14 @@ pub const Module = struct {
 
     pub fn getFn(module: Module, name: [*:0]const u8) Function {
         return .toZig(core.LLVMGetNamedFunction(module.ref, name));
+    }
+
+    pub fn getGlobal(module: Module, name: [*:0]const u8) Value {
+        return .toZig(core.LLVMGetNamedGlobal(module.ref, name));
+    }
+
+    pub fn createBasicBlock(name: [*:0]const u8) BasicBlock {
+        return .toZig(core.LLVMCreateBasicBlockInContext(core.LLVMGetGlobalContext(), name));
     }
 
     pub fn toZig(ref: types.LLVMModuleRef) Module {
@@ -108,13 +119,13 @@ pub const FunctionWithType = struct {
 };
 
 pub const Function = struct {
-    value: ?*types.LLVMOpaqueValue,
+    value: *types.LLVMOpaqueValue,
 
     pub fn toZig(value: ?*types.LLVMOpaqueValue) Function {
-        return .{ .value = value };
+        return .{ .value = value orelse @panic("null") };
     }
 
-    pub fn toC(t: Function) ?*types.LLVMOpaqueValue {
+    pub fn toC(t: Function) *types.LLVMOpaqueValue {
         return t.value;
     }
 
@@ -124,6 +135,14 @@ pub const Function = struct {
 
     pub fn getParam(fun: Function, index: usize) Value {
         return .toZig(core.LLVMGetParam(fun.toC(), @intCast(index)));
+    }
+
+    pub fn getType(fun: Function) FunctionType {
+        return .toZig(core.LLVMGlobalGetValueType(fun.toC()));
+    }
+
+    pub fn getWithType(fun: Function) FunctionWithType {
+        return .{ .fun = fun, .t = fun.getType() };
     }
 };
 
