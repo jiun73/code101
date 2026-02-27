@@ -55,7 +55,7 @@ fn printstack(loopbackStack: std.ArrayList(*const SyntaxTreeNode)) void {
     std.debug.print("\n", .{});
 }
 
-pub fn traverseNode(b: AST.Builder, startNode: SyntaxTreeNode, startTokens: [][]const u8, gpa: std.mem.Allocator) !void {
+pub fn traverseNode(b: *AST.Builder, startNode: SyntaxTreeNode, startTokens: [][]const u8, gpa: std.mem.Allocator) !void {
     var tokens = startTokens;
     var currentNode: *const SyntaxTreeNode = &startNode;
     var loopbackStack = std.ArrayList(*const SyntaxTreeNode).initCapacity(gpa, 32) catch @panic("OOM");
@@ -219,10 +219,12 @@ pub fn compile(path: [:0]const u8) !void {
         var tokens = std.ArrayList([]const u8).initCapacity(gpa, 128) catch @panic("OOM");
         defer tokens.deinit(gpa);
         tokenize(file, &tokens, gpa);
-        const b = AST.Builder.create(gpa);
-        try traverseNode(b, nodes.masterNode, tokens.items, gpa);
+        var b = AST.Builder.init(gpa);
+        defer b.deinit();
+        try traverseNode(&b, nodes.masterNode, tokens.items, gpa);
 
         b.module.dump();
+        b.toEXE();
     } else |err| switch (err) {
         error.FileNotFound => {
             std.debug.print("Error: File not found", .{});

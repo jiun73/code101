@@ -12,7 +12,7 @@ pub const masterNode: SyntaxTreeNode = .{
     },
 };
 
-pub fn buildPrintMessage(b: AST.Builder, tokens: [][]const u8) void {
+pub fn buildPrintMessage(b: *AST.Builder, tokens: [][]const u8) void {
     const message = tokens[3];
     const printf = b.module.getFn("printf");
     const fmt = b.module.getGlobal("fmt_s");
@@ -21,6 +21,28 @@ pub fn buildPrintMessage(b: AST.Builder, tokens: [][]const u8) void {
     const str = b.builder.globalStringPtr(message_nt, "message");
 
     _ = b.builder.call(printf.getWithType(), &.{ fmt, str }, "");
+}
+
+pub fn buildIntDecl(b: *AST.Builder, tokens: [][]const u8) void {
+    const varName = tokens[4];
+    const varName_nt = b.gpa.dupeZ(u8, varName) catch @panic("OOM");
+    defer b.gpa.free(varName_nt);
+
+    const c = llvm.Type.constInt32(1);
+    const ptr = b.builder.alloca(.Int32(), varName_nt);
+    _ = b.builder.store(c, ptr);
+    b.vars.put(varName, ptr) catch @panic("fuck");
+}
+
+pub fn buildPrintVar(b: *AST.Builder, tokens: [][]const u8) void {
+    const message = tokens[1];
+    const printf = b.module.getFn("printf");
+    const fmt = b.module.getGlobal("fmt_d");
+    const message_nt = b.gpa.dupeZ(u8, message) catch @panic("OOM");
+    defer b.gpa.free(message_nt);
+    const v = b.vars.get(message) orelse @panic("err");
+
+    _ = b.builder.call(printf.getWithType(), &.{ fmt, v }, "");
 }
 
 pub const phraseNode = SyntaxTreeNode{
@@ -60,6 +82,7 @@ pub const phraseNode = SyntaxTreeNode{
                         fns.Eq("afficher").fun,
                         fns.variable,
                     },
+                    .build = buildPrintVar,
                     .next = &.{
                         SyntaxTreeNode{ .loopback = .Jump },
                     },
@@ -75,6 +98,7 @@ pub const phraseNode = SyntaxTreeNode{
                         fns.Eq("à").fun,
                         fns.Eq("1").fun,
                     },
+                    .build = buildIntDecl,
                     .next = &.{
                         SyntaxTreeNode{ .loopback = .Jump },
                     },
@@ -119,7 +143,7 @@ pub const phraseNode = SyntaxTreeNode{
     },
 };
 
-pub fn buildSectionFn(b: AST.Builder, tokens: [][]const u8) void {
+pub fn buildSectionFn(b: *AST.Builder, tokens: [][]const u8) void {
     const fnName = tokens[2];
 
     if (std.mem.eql(u8, fnName, "principale")) {

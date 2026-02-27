@@ -5,6 +5,7 @@ pub const types = llvm.types;
 pub const core = llvm.core;
 pub const error_handling = llvm.error_handling;
 pub const errors = llvm.errors;
+pub const target_machine = llvm.target_machine;
 
 pub const Module = struct {
     ref: types.LLVMModuleRef,
@@ -66,6 +67,10 @@ pub const Type = struct {
 
     pub fn Int32() Type {
         return .toZig(core.LLVMInt32Type());
+    }
+
+    pub fn constInt32(value: u32) Value {
+        return .toZig(core.LLVMConstInt(Type.Int32().toC(), value, 0));
     }
 
     pub fn Ptr(t: Type) Type {
@@ -183,6 +188,14 @@ pub const Builder = struct {
 
     pub fn positionAtEnd(builder: Builder, block: BasicBlock) void {
         core.LLVMPositionBuilderAtEnd(builder.toC(), block.toC());
+    }
+
+    pub fn store(builder: Builder, value: Value, ptr: Value) Value {
+        return .toZig(core.LLVMBuildStore(builder.toC(), value.toC(), ptr.toC()));
+    }
+
+    pub fn alloca(builder: Builder, ty: Type, name: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildAlloca(builder.toC(), ty.toC(), name));
     }
 
     pub fn add(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
