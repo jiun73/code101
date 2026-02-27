@@ -45,6 +45,11 @@ pub fn buildPrintVar(b: *AST.Builder, tokens: [][]const u8) void {
     _ = b.builder.call(printf.getWithType(), &.{ fmt, v }, "");
 }
 
+pub fn buildRet(b: *AST.Builder, _: [][]const u8) void {
+    const val = llvm.core.LLVMGetLastFunction(b.module.toC());
+    _ = b.builder.ret(.toZig(val));
+}
+
 pub const phraseNode = SyntaxTreeNode{
     .debug = "phrase",
     .loopback = .Self,
@@ -175,6 +180,7 @@ pub const sectionNode = SyntaxTreeNode{
                     fns.Eq("---").fun,
                     fns.Eq("---").fun,
                 },
+                .build = buildRet,
                 .next = &.{SyntaxTreeNode{ .loopback = .Jump }},
             },
         },

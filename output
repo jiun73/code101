@@ -1,0 +1,64 @@
+	.text
+	.file	"test"
+	.globl	dum
+	.p2align	4, 0x90
+	.type	dum,@function
+dum:
+	.cfi_startproc
+	retq
+.Lfunc_end0:
+	.size	dum, .Lfunc_end0-dum
+	.cfi_endproc
+
+	.globl	main
+	.p2align	4, 0x90
+	.type	main,@function
+main:
+	.cfi_startproc
+	subq	$24, %rsp
+	.cfi_def_cfa_offset 32
+	movl	$.Lfmt_s, %edi
+	movq	%rdi, 8(%rsp)
+	movl	$.Lmessage, %esi
+	xorl	%eax, %eax
+	movb	%al, 19(%rsp)
+	callq	printf@PLT
+	movq	8(%rsp), %rdi
+	movb	19(%rsp), %al
+	movl	$.Lmessage.1, %esi
+	callq	printf@PLT
+	movb	19(%rsp), %al
+	movl	$1, 20(%rsp)
+	movl	$.Lfmt_d, %edi
+	leaq	20(%rsp), %rsi
+	callq	printf@PLT
+	movq	main@GOTPCREL(%rip), %rax
+	addq	$24, %rsp
+	.cfi_def_cfa_offset 8
+	retq
+.Lfunc_end1:
+	.size	main, .Lfunc_end1-main
+	.cfi_endproc
+
+	.type	.Lfmt_d,@object
+	.section	.rodata.str1.1,"aMS",@progbits,1
+.Lfmt_d:
+	.asciz	"%d\n"
+	.size	.Lfmt_d, 4
+
+	.type	.Lfmt_s,@object
+.Lfmt_s:
+	.asciz	"%s\n"
+	.size	.Lfmt_s, 4
+
+	.type	.Lmessage,@object
+.Lmessage:
+	.asciz	"\"bonjour monde\""
+	.size	.Lmessage, 16
+
+	.type	.Lmessage.1,@object
+.Lmessage.1:
+	.asciz	"\"bonjour monde2\""
+	.size	.Lmessage.1, 17
+
+	.section	".note.GNU-stack","",@progbits

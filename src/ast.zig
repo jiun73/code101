@@ -33,6 +33,9 @@ pub const Builder = struct {
         _ = target.LLVMInitializeNativeTarget();
         _ = target.LLVMInitializeNativeAsmPrinter();
         _ = target.LLVMInitializeNativeAsmParser();
+        _ = target.LLVMInitializeAllTargetInfos();
+        _ = target.LLVMInitializeAllTargets();
+        _ = target.LLVMInitializeAllTargetMCs();
         llvm.error_handling.LLVMEnablePrettyStackTrace();
         llvm.error_handling.LLVMInstallFatalErrorHandler(errorhandle);
 
@@ -47,6 +50,7 @@ pub const Builder = struct {
         builder.positionAtEnd(entry);
         _ = builder.globalStringPtr("%d\n", "fmt_d");
         _ = builder.globalStringPtr("%s\n", "fmt_s");
+        _ = builder.retvoid();
 
         const vars = std.StringHashMap(llvm.Value).init(gpa);
 
@@ -61,14 +65,15 @@ pub const Builder = struct {
 
     pub fn toEXE(builder: *Builder) void {
         const target_name = llvm.target_machine.LLVMGetDefaultTargetTriple();
-        const target_ref = llvm.target_machine.LLVMGetFirstTarget();
+        var target_ref: types.LLVMTargetRef = null;
+        _ = llvm.target_machine.LLVMGetTargetFromTriple(target_name, @ptrCast(&target_ref), null);
         const cpu = llvm.target_machine.LLVMGetHostCPUName();
         const cpu_features = llvm.target_machine.LLVMGetHostCPUFeatures();
 
         std.debug.print("{s}\n{s}\n{s}\n", .{ target_name, cpu, cpu_features });
         std.debug.print("{any}\n", .{target_ref});
 
-        const target_machine = llvm.target_machine.LLVMCreateTargetMachine(target_ref, target_name, cpu, cpu_features, .LLVMCodeGenLevelNone, .LLVMRelocDefault, .LLVMCodeModelDefault);
+        const target_machine = llvm.target_machine.LLVMCreateTargetMachine(@ptrCast(target_ref), target_name, cpu, cpu_features, .LLVMCodeGenLevelNone, .LLVMRelocDefault, .LLVMCodeModelDefault);
 
         const pm: llvm.types.LLVMPassManagerRef = llvm.core.LLVMCreatePassManager();
         const outfile = "output";

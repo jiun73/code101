@@ -214,6 +214,10 @@ pub const Builder = struct {
         return .toZig(core.LLVMBuildRet(builder.ref, value.ref));
     }
 
+    pub fn retvoid(builder: Builder) Value {
+        return .toZig(core.LLVMBuildRetVoid(builder.ref));
+    }
+
     pub fn globalStringPtr(builder: Builder, value: [*:0]const u8, name: [*:0]const u8) Value {
         return .toZig(core.LLVMBuildGlobalStringPtr(builder.toC(), value, name));
     }
