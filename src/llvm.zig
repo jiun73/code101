@@ -7,6 +7,26 @@ pub const error_handling = llvm.error_handling;
 pub const errors = llvm.errors;
 pub const target_machine = llvm.target_machine;
 
+pub fn initializeNativeTarget() void {
+    _ = target.LLVMInitializeNativeTarget();
+}
+
+pub fn initializeNativeAsmParser() void {
+    _ = target.LLVMInitializeNativeAsmParser();
+}
+
+pub fn initializeAllTargetInfos() void {
+    _ = target.LLVMInitializeAllTargetInfos();
+}
+
+pub fn initializeAllTargets() void {
+    _ = target.LLVMInitializeAllTargets();
+}
+
+pub fn initializeAllTargetMCs() void {
+    _ = target.LLVMInitializeAllTargetMCs();
+}
+
 pub const Module = struct {
     ref: types.LLVMModuleRef,
 
@@ -22,19 +42,40 @@ pub const Module = struct {
         core.LLVMDumpModule(module.ref);
     }
 
+    pub fn printToFile(module: Module, path: [*:0]const u8) void {
+        _ = core.LLVMPrintModuleToFile(module.toC(), path, null);
+    }
+
     pub fn writeBitecodeToFile(module: Module, path: [*:0]const u8) c_int {
         return llvm.bitwriter.LLVMWriteBitcodeToFile(module.toC(), path);
     }
 
-    pub fn addFn(module: Module, name: [*:0]const u8, t: FunctionType) FunctionWithType {
-        const fun = Function.toZig(core.LLVMAddFunction(module.ref, name, t.toC()));
-        return .create(fun, t);
+    pub fn addAlias2(module: Module, ty: Type, addrSpace: c_uint, aliasee: Value, name: [*:0]const u8) Value {
+        return .toZig(core.LLVMAddAlias2(module.toC(), ty.toC(), addrSpace, aliasee.toC(), name));
     }
 
-    pub fn addFnCreateType(module: Module, name: [*:0]const u8, ret: Type, params: []const Type, isVarArg: bool) FunctionWithType {
-        const t: FunctionType = .create(ret, params, isVarArg);
-        const fun: Function = .toZig(core.LLVMAddFunction(module.ref, name, t.toC()));
-        return .create(fun, t);
+    pub fn addGlobal(module: Module, ty: Type, name: [*:0]const u8) Value {
+        return .toZig(core.LLVMAddGlobal(module.toC(), ty.toC(), name));
+    }
+
+    pub fn addGlobalIFunc(module: Module, name: [:0]const u8, ty: Type, addrSpace: c_uint, resolver: Value) Value {
+        return .toZig(core.LLVMAddGlobalIFunc(module.toC(), name, name.len, ty, addrSpace, resolver));
+    }
+
+    pub fn addGlobalInAddressSpace(module: Module, name: [*:0]const u8, ty: Type, addrSpace: c_uint) Value {
+        return .toZig(core.LLVMAddGlobalInAddressSpace(module.toC(), ty, name, addrSpace));
+    }
+
+    pub fn appendInlineAsm(module: Module, asmb: [*:0]const u8, len: usize) Value {
+        return .toZig(core.LLVMAppendModuleInlineAsm(module.toC(), asmb, len));
+    }
+
+    pub fn setTarget(module: Module, triple: [*:0]const u8) void {
+        core.LLVMSetTarget(module, triple);
+    }
+
+    pub fn addFn(module: Module, name: [*:0]const u8, t: FunctionType) Function {
+        return .toZig(core.LLVMAddFunction(module.ref, name, t.toC()));
     }
 
     pub fn getFn(module: Module, name: [*:0]const u8) Function {
@@ -58,38 +99,6 @@ pub const Module = struct {
     }
 };
 
-pub const Type = struct {
-    ref: types.LLVMTypeRef,
-
-    pub fn Int8() Type {
-        return .toZig(core.LLVMInt8Type());
-    }
-
-    pub fn Int32() Type {
-        return .toZig(core.LLVMInt32Type());
-    }
-
-    pub fn constInt32(value: u32) Value {
-        return .toZig(core.LLVMConstInt(Type.Int32().toC(), value, 0));
-    }
-
-    pub fn Ptr(t: Type) Type {
-        return .toZig(core.LLVMPointerType(t.toC(), 0));
-    }
-
-    pub fn PtrAddrSpace(t: Type, addrSpace: c_uint) Type {
-        return .toZig(core.LLVMPointerType(t.toC(), addrSpace));
-    }
-
-    pub fn toZig(ref: types.LLVMTypeRef) Type {
-        return .{ .ref = ref };
-    }
-
-    pub fn toC(t: Type) types.LLVMTypeRef {
-        return t.ref;
-    }
-};
-
 pub const FunctionType = struct {
     ref: types.LLVMTypeRef,
 
@@ -103,23 +112,6 @@ pub const FunctionType = struct {
 
     pub fn toC(t: FunctionType) types.LLVMTypeRef {
         return t.ref;
-    }
-};
-
-pub const FunctionWithType = struct {
-    t: FunctionType,
-    fun: Function,
-
-    pub fn create(fun: Function, t: FunctionType) FunctionWithType {
-        return .{ .fun = fun, .t = t };
-    }
-
-    pub fn appendBasicBlock(fun: FunctionWithType, name: [*:0]const u8) BasicBlock {
-        return fun.fun.appendBasicBlock(name);
-    }
-
-    pub fn getParam(fun: FunctionWithType, index: usize) Value {
-        return fun.fun.getParam(index);
     }
 };
 
@@ -142,12 +134,15 @@ pub const Function = struct {
         return .toZig(core.LLVMGetParam(fun.toC(), @intCast(index)));
     }
 
-    pub fn getType(fun: Function) FunctionType {
-        return .toZig(core.LLVMGlobalGetValueType(fun.toC()));
+    pub fn getParams(fun: Function) []const Value {
+        var ptr: ?*types.LLVMValueRef = null;
+        core.LLVMGetParams(fun.toC(), &ptr);
+        const len = core.LLVMCountParams(fun.toC());
+        return .{ .ptr = ptr, .len = len };
     }
 
-    pub fn getWithType(fun: Function) FunctionWithType {
-        return .{ .fun = fun, .t = fun.getType() };
+    pub fn getType(fun: Function) FunctionType {
+        return .toZig(core.LLVMGlobalGetValueType(fun.toC()));
     }
 };
 
@@ -163,8 +158,114 @@ pub const BasicBlock = struct {
     }
 };
 
+pub const Type = struct {
+    ref: types.LLVMTypeRef,
+
+    pub fn Int8() Type {
+        return .toZig(core.LLVMInt8Type());
+    }
+
+    pub fn Int16() Type {
+        return .toZig(core.LLVMInt16Type());
+    }
+
+    pub fn Int32() Type {
+        return .toZig(core.LLVMInt32Type());
+    }
+
+    pub fn Int64() Type {
+        return .toZig(core.LLVMInt64Type());
+    }
+
+    pub fn Ptr(t: Type) Type {
+        return .toZig(core.LLVMPointerType(t.toC(), 0));
+    }
+
+    pub fn PtrAddrSpace(t: Type, addrSpace: c_uint) Type {
+        return .toZig(core.LLVMPointerType(t.toC(), addrSpace));
+    }
+
+    pub fn toZig(ref: types.LLVMTypeRef) Type {
+        return .{ .ref = ref };
+    }
+
+    pub fn toC(t: Type) types.LLVMTypeRef {
+        return t.ref;
+    }
+
+    pub fn toString(v: Type) [*:0]const u8 {
+        return core.LLVMPrintTypeToString(v.toC());
+    }
+};
+
+pub const Linkage = types.LLVMLinkage;
+
 pub const Value = struct {
     ref: types.LLVMValueRef,
+
+    pub fn getType(v: Value) Type {
+        return .toZig(core.LLVMTypeOf(v.toC()));
+    }
+
+    pub fn setInitializer(v: Value, c: Value) Value {
+        core.LLVMSetInitializer(v.toC(), c.toC());
+        return v;
+    }
+
+    pub fn setLinkage(v: Value, linkage: Linkage) Value {
+        core.LLVMSetLinkage(v.toC(), linkage);
+        return v;
+    }
+
+    pub fn setUnnamedAddr(v: Value, hasUnnamedAddr: bool) Value {
+        core.LLVMSetUnnamedAddr(v.toC(), @intFromBool(hasUnnamedAddr));
+        return v;
+    }
+
+    pub fn setGlobalConstant(v: Value, isConstant: bool) Value {
+        core.LLVMSetGlobalConstant(v.toC(), @intFromBool(isConstant));
+        return v;
+    }
+
+    pub fn constString(str: [*:0]const u8, dontNullTerminate: bool) Value {
+        return .toZig(core.LLVMConstString(str, @intCast(std.mem.len(str)), @intFromBool(dontNullTerminate)));
+    }
+
+    pub fn constUInt8(value: u8) Value {
+        return .toZig(core.LLVMConstInt(Type.Int8().toC(), value, 0));
+    }
+
+    pub fn constUInt16(value: u16) Value {
+        return .toZig(core.LLVMConstInt(Type.Int16().toC(), value, 0));
+    }
+
+    pub fn constUInt32(value: u32) Value {
+        return .toZig(core.LLVMConstInt(Type.Int32().toC(), value, 0));
+    }
+
+    pub fn constUInt64(value: u64) Value {
+        return .toZig(core.LLVMConstInt(Type.Int64().toC(), value, 0));
+    }
+
+    pub fn constInt8(value: u8) Value {
+        return .toZig(core.LLVMConstInt(Type.Int8().toC(), value, 1));
+    }
+
+    pub fn constInt16(value: u16) Value {
+        return .toZig(core.LLVMConstInt(Type.Int16().toC(), value, 1));
+    }
+
+    pub fn constInt32(value: u32) Value {
+        return .toZig(core.LLVMConstInt(Type.Int32().toC(), value, 1));
+    }
+
+    pub fn constInt64(value: u64) Value {
+        return .toZig(core.LLVMConstInt(Type.Int64().toC(), value, 1));
+    }
+
+    pub fn toString(v: Value) [*:0]const u8 {
+        return core.LLVMPrintValueToString(v.toC());
+    }
 
     pub fn toZig(ref: types.LLVMValueRef) Value {
         return .{ .ref = ref };
@@ -190,6 +291,10 @@ pub const Builder = struct {
         core.LLVMPositionBuilderAtEnd(builder.toC(), block.toC());
     }
 
+    pub fn load2(builder: Builder, ptr: Value, name: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildLoad2(builder.toC(), ptr.getType().toC(), ptr.toC(), name));
+    }
+
     pub fn store(builder: Builder, value: Value, ptr: Value) Value {
         return .toZig(core.LLVMBuildStore(builder.toC(), value.toC(), ptr.toC()));
     }
@@ -202,12 +307,24 @@ pub const Builder = struct {
         return .toZig(core.LLVMBuildAdd(builder.toC(), LHS.toC(), RHS.toC(), retName));
     }
 
+    pub fn fadd(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildFAdd(builder.toC(), LHS.toC(), RHS.toC(), retName));
+    }
+
+    pub fn sub(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildSub(builder.toC(), LHS.toC(), RHS.toC(), retName));
+    }
+
+    pub fn fsub(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildFSub(builder.toC(), LHS.toC(), RHS.toC(), retName));
+    }
+
     pub fn load(builder: Builder, ty: Type, val: Value, retName: [*:0]const u8) Value {
         return .toZig(core.LLVMBuildLoad2(builder.toC(), ty.toC(), val.toC(), retName));
     }
 
-    pub fn call(builder: Builder, fun: FunctionWithType, args: []const Value, retName: [*:0]const u8) Value {
-        return .toZig(core.LLVMBuildCall2(builder.toC(), fun.t.toC(), fun.fun.toC(), @ptrCast(@constCast(args)), @intCast(args.len), retName));
+    pub fn call(builder: Builder, fun: Function, args: []const Value, retName: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildCall2(builder.toC(), fun.getType().toC(), fun.toC(), @ptrCast(@constCast(args)), @intCast(args.len), retName));
     }
 
     pub fn ret(builder: Builder, value: Value) Value {
@@ -228,5 +345,128 @@ pub const Builder = struct {
 
     pub fn toC(t: Builder) types.LLVMBuilderRef {
         return t.ref;
+    }
+};
+
+pub const Target = struct {
+    ref: types.LLVMTargetRef,
+
+    pub fn getFromTriple(triple: [*:0]const u8) Target {
+        var ref: types.LLVMTargetRef = null;
+        _ = llvm.target_machine.LLVMGetTargetFromTriple(@ptrCast(triple), @ptrCast(&ref), null);
+        return .toZig(ref);
+    }
+
+    pub fn toZig(ref: types.LLVMTargetRef) Target {
+        return .{ .ref = ref };
+    }
+
+    pub fn toC(t: Target) types.LLVMTargetRef {
+        return t.ref;
+    }
+};
+
+pub const CodeGenOptLevel = types.LLVMCodeGenOptLevel;
+pub const RelocMode = types.LLVMRelocMode;
+pub const CodeModel = types.LLVMCodeModel;
+pub const CodeGenFileType = types.LLVMCodeGenFileType;
+
+pub const TargetMachine = struct {
+    ref: types.LLVMTargetMachineRef,
+
+    pub fn toZig(ref: types.LLVMTargetMachineRef) TargetMachine {
+        return .{ .ref = ref };
+    }
+
+    pub fn toC(t: TargetMachine) types.LLVMTargetMachineRef {
+        return t.ref;
+    }
+
+    pub fn getDefaultTargetTriple() [*:0]const u8 {
+        return @ptrCast(llvm.target_machine.LLVMGetDefaultTargetTriple());
+    }
+
+    pub fn getHostCPUName() [*:0]const u8 {
+        return @ptrCast(llvm.target_machine.LLVMGetHostCPUName());
+    }
+
+    pub fn getHostCPUFeatures() [*:0]const u8 {
+        return @ptrCast(llvm.target_machine.LLVMGetHostCPUFeatures());
+    }
+
+    pub fn create(
+        trg: Target,
+        target_name: [*:0]const u8,
+        cpu: [*:0]const u8,
+        cpu_features: [*:0]const u8,
+        codeGenOptLevel: CodeGenOptLevel,
+        relocMode: RelocMode,
+        codeModel: CodeModel,
+    ) TargetMachine {
+        return .toZig(
+            llvm.target_machine.LLVMCreateTargetMachine(
+                @ptrCast(trg.toC()),
+                target_name,
+                cpu,
+                cpu_features,
+                codeGenOptLevel,
+                relocMode,
+                codeModel,
+            ),
+        );
+    }
+
+    pub fn EmitToFile(tm: TargetMachine, module: Module, outfile: [:0]const u8, codegen: CodeGenFileType) void {
+        _ = llvm.target_machine.LLVMTargetMachineEmitToFile(
+            tm.toC(),
+            module.toC(),
+            outfile,
+            codegen,
+            null,
+        );
+    }
+};
+
+pub const PassManager = struct {
+    ref: llvm.types.LLVMPassManagerRef,
+
+    pub fn toZig(ref: types.LLVMPassManagerRef) PassManager {
+        return .{ .ref = ref };
+    }
+
+    pub fn toC(t: PassManager) types.LLVMPassManagerRef {
+        return t.ref;
+    }
+
+    pub fn create() PassManager {
+        return .toZig(llvm.core.LLVMCreatePassManager());
+    }
+
+    pub fn run(pm: PassManager, module: Module) void {
+        _ = llvm.core.LLVMRunPassManager(pm.toC(), module.toC());
+    }
+};
+
+pub const Context = struct {
+    ref: llvm.types.LLVMContextRef,
+
+    pub fn toZig(ref: types.LLVMContextRef) Context {
+        return .{ .ref = ref };
+    }
+
+    pub fn toC(t: Context) types.LLVMContextRef {
+        return t.ref;
+    }
+
+    pub fn create() Context {
+        return .toZig(core.LLVMContextCreate());
+    }
+
+    pub fn global() Context {
+        return .toZig(core.LLVMGetGlobalContext());
+    }
+
+    pub fn dispose(c: Context) void {
+        core.LLVMContextDispose(c.toC());
     }
 };

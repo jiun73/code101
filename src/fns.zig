@@ -1,4 +1,5 @@
 const std = @import("std");
+const tok = @import("Tokenizer.zig");
 
 pub fn Eq(comptime eqq: []const u8) type {
     return struct {
@@ -21,4 +22,11 @@ pub fn string(str: []const u8) bool {
 
 pub fn variable(str: []const u8) bool {
     return (str.len == 1);
+}
+
+pub fn integer(str: []const u8) bool {
+    for (str) |c| {
+        if (!tok.isoneof(c, "0123456789")) return false;
+    }
+    return true;
 }

@@ -1,8 +1,11 @@
 --- section principale ---
 
-afficher le message "bonjour monde" et
-afficher le message "bonjour monde2" et
-déclarer un nombre entier i égal à 1 et
-afficher i.
+afficher le message "bonjour monde." et (ahah)
+afficher le message "message." et
+déclarer un nombre entier i égal à 10 et
+afficher le message "le nombre i est égal à %d" avec i et
+déclarer un nombre entier n égal à 12 et
+afficher i et
+afficher n.
  
 --- ---

@@ -15,12 +15,8 @@ pub fn e() void {
     // Create a new LLVM module
     const module = b.Module.create("test");
 
-    const printf_fn = module.addFnCreateType("printf", b.Type.Int8(), &.{b.Type.Int8().Ptr()}, true);
-
-    std.debug.print("{s}\n", .{core.LLVMPrintValueToString(printf_fn.fun.toC())});
-    std.debug.print("{s}\n", .{core.LLVMPrintTypeToString(printf_fn.t.toC())});
-
-    const main_fn = module.addFnCreateType("main", b.Type.Int32(), &.{ b.Type.Int32(), b.Type.Int8().Ptr().Ptr() }, false);
+    const printf_fn = module.addFn("printf", .create(b.Type.Int8(), &.{b.Type.Int8().Ptr()}, true));
+    const main_fn = module.addFn("main", .create(b.Type.Int32(), &.{ b.Type.Int32(), b.Type.Int8().Ptr().Ptr() }, false));
 
     const entry = main_fn.appendBasicBlock("entry");
     const builder = b.Builder.create();
@@ -35,10 +31,7 @@ pub fn e() void {
 
     const ttt = module.getFn("printf");
 
-    std.debug.print("ttt: {s}\n", .{core.LLVMPrintValueToString(ttt.toC())});
-    std.debug.print("2: {s}\n", .{core.LLVMPrintTypeToString(ttt.getType().toC())});
-
-    _ = builder.call(ttt.getWithType(), &.{ str, arg1 }, "test");
+    _ = builder.call(ttt, &.{ str, arg1 }, "test");
     _ = builder.call(printf_fn, &.{ str2, first_cmd }, "test2");
 
     //const sum = builder.buildAdd(arg1, arg2, "sum");
