@@ -3,6 +3,7 @@ const std = @import("std");
 pub const target = llvm.target;
 pub const types = llvm.types;
 pub const core = llvm.core;
+pub const jit = llvm.jit;
 pub const error_handling = llvm.error_handling;
 pub const errors = llvm.errors;
 pub const target_machine = llvm.target_machine;
@@ -291,8 +292,8 @@ pub const Builder = struct {
         core.LLVMPositionBuilderAtEnd(builder.toC(), block.toC());
     }
 
-    pub fn load2(builder: Builder, ptr: Value, name: [*:0]const u8) Value {
-        return .toZig(core.LLVMBuildLoad2(builder.toC(), ptr.getType().toC(), ptr.toC(), name));
+    pub fn load2(builder: Builder, ty: Type, ptr: Value, name: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildLoad2(builder.toC(), ty.toC(), ptr.toC(), name));
     }
 
     pub fn store(builder: Builder, value: Value, ptr: Value) Value {
@@ -301,6 +302,16 @@ pub const Builder = struct {
 
     pub fn alloca(builder: Builder, ty: Type, name: [*:0]const u8) Value {
         return .toZig(core.LLVMBuildAlloca(builder.toC(), ty.toC(), name));
+    }
+
+    pub fn allocaDupeZ(builder: Builder, ty: Type, name: []const u8, gpa: std.mem.Allocator) Value {
+        const var_name_nt = gpa.dupeZ(u8, name) catch @panic("OOM");
+        defer gpa.free(var_name_nt);
+        return builder.alloca(ty, var_name_nt);
+    }
+
+    pub fn mul(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildMul(builder.toC(), LHS.toC(), RHS.toC(), retName));
     }
 
     pub fn add(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
@@ -468,5 +479,47 @@ pub const Context = struct {
 
     pub fn dispose(c: Context) void {
         core.LLVMContextDispose(c.toC());
+    }
+};
+
+pub const LLJitBuilder = struct {
+    ref: llvm.types.LLVMOrcLLJITBuilderRef,
+
+    pub fn toZig(ref: types.LLVMOrcLLJITBuilderRef) LLJitBuilder {
+        return .{ .ref = ref };
+    }
+
+    pub fn toC(t: LLJitBuilder) types.LLVMOrcLLJITBuilderRef {
+        return t.ref;
+    }
+
+    pub fn create() Context {
+        return .toZig(jit.LLVMOrcCreateLLJITBuilder());
+    }
+
+    pub fn dispose(c: LLJitBuilder) void {
+        jit.LLVMOrcDisposeLLJITBuilder(c.toC());
+    }
+};
+
+pub const LLJit = struct {
+    ref: llvm.types.LLVMOrcLLJITRef,
+
+    pub fn toZig(ref: types.LLVMOrcLLJITRef) LLJit {
+        return .{ .ref = ref };
+    }
+
+    pub fn toC(t: LLJit) types.LLVMOrcLLJITRef {
+        return t.ref;
+    }
+
+    pub fn create(builder: LLJitBuilder) Context {
+        var ref: types.LLVMOrcLLJITRef = undefined;
+        jit.LLVMOrcCreateLLJIT(&ref, builder.toC());
+        return .toZig(ref);
+    }
+
+    pub fn dispose(c: Context) void {
+        jit.LLVMOrcDisposeLLJIT(c.toC());
     }
 };

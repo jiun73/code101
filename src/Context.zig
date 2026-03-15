@@ -9,6 +9,24 @@ const nodes = @import("nodes.zig");
 
 const Context = @This();
 
+const ValOrRef = union(enum) {
+    value: llvm.Value,
+    ref: []const u8,
+
+    pub fn getValue(vr: ValOrRef, ctx: *Context) llvm.Value {
+        switch (vr) {
+            .value => |val| return val,
+            .ref => |ref| return ctx.getVar(ref),
+        }
+    }
+};
+
+const VNode = struct {
+    next: []const u8,
+    build: ?SyntaxTreeNode.BuildFn = null,
+    tokens: SyntaxTreeNode.TokenUsageType = .Current,
+};
+
 progressNode: std.Progress.Node,
 gpa: std.mem.Allocator,
 module: llvm.Module,
@@ -16,6 +34,8 @@ builder: llvm.Builder,
 counter: u32,
 
 vars: std.StringHashMap(llvm.Value),
+varStack: std.ArrayList(ValOrRef),
+result: ?llvm.Value,
 
 pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node) Context {
     llvm.initializeAllTargetInfos();
@@ -37,6 +57,7 @@ pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node) Context {
     _ = module.addGlobal(fmt_s.getType(), "fmt_s").setInitializer(fmt_s).setGlobalConstant(true).setLinkage(.LLVMInternalLinkage).setUnnamedAddr(true);
 
     const vars = std.StringHashMap(llvm.Value).init(gpa);
+    const varStack = std.ArrayList(ValOrRef).initCapacity(gpa, 32) catch @panic("OOM");
 
     return .{
         .progressNode = progressNode,
@@ -45,6 +66,8 @@ pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node) Context {
         .module = module,
         .builder = builder,
         .vars = vars,
+        .varStack = varStack,
+        .result = null,
     };
 }
 
@@ -65,12 +88,13 @@ pub fn toAsm(builder: *Context) void {
 
 pub fn deinit(builder: *Context) void {
     builder.vars.deinit();
+    builder.varStack.deinit(builder.gpa);
     builder.progressNode.end();
 }
 
 const CompilerError = error{ NoLbNextNode, InvalidStackPop };
 
-fn printstack(loopbackStack: std.ArrayList(*const SyntaxTreeNode)) void {
+fn printstack(loopbackStack: std.ArrayList(SyntaxTreeNode)) void {
     std.debug.print("stack:", .{});
     for (loopbackStack.items) |item| {
         std.debug.print("[{?s}]", .{item.debug});
@@ -80,14 +104,17 @@ fn printstack(loopbackStack: std.ArrayList(*const SyntaxTreeNode)) void {
 
 pub fn traverseNodes(ctx: *Context, startNode: SyntaxTreeNode, startTokens: [][]const u8, gpa: std.mem.Allocator) !void {
     var tokens = startTokens;
-    var currentNode: *const SyntaxTreeNode = &startNode;
-    var loopbackStack = std.ArrayList(*const SyntaxTreeNode).initCapacity(gpa, 32) catch @panic("OOM");
+    var currentNode: SyntaxTreeNode = startNode;
+    var loopbackStack = std.ArrayList(SyntaxTreeNode).initCapacity(gpa, 32) catch @panic("OOM");
     defer loopbackStack.deinit(gpa);
 
+    var savedTokensStack = std.ArrayList([][]const u8).initCapacity(gpa, 32) catch @panic("OOM");
+    defer savedTokensStack.deinit(gpa);
+
     mainloop: while (true) {
+        ctx.progressNode.setCompletedItems(tokens.len);
         if (currentNode.debug != null) {
-            ctx.progressNode.setCompletedItems(tokens.len);
-            //std.debug.print("current node: {s} ({any} tokens)\n", .{ currentNode.debug.?, tokens.len });
+            std.debug.print("current node: {s} ({any} tokens)\n", .{ currentNode.debug.?, tokens.len });
         }
 
         if (tokens.len == 0) {
@@ -99,47 +126,88 @@ pub fn traverseNodes(ctx: *Context, startNode: SyntaxTreeNode, startTokens: [][]
         }
 
         try switch (currentNode.loopback) {
-            .Next => {
-                //std.debug.print("lbnext:{?s} - ", .{currentNode.lbnext.?.debug});
-                try loopbackStack.append(gpa, currentNode.lbnext orelse return CompilerError.NoLbNextNode);
-                //printstack(loopbackStack);
+            .After => {
+                std.debug.print("after:{?s} - ", .{currentNode.debug});
+                var copy = currentNode;
+                copy.next = copy.after;
+                copy.tokens = .Current;
+                copy.debug = copy.debug_after;
+                copy.loopback = .None;
+                try loopbackStack.append(gpa, copy);
+                printstack(loopbackStack);
+            },
+            .JumpAfter => {
+                std.debug.print("jumpafter:{?s} - ", .{currentNode.debug});
+                try loopbackStack.append(gpa, SyntaxTreeNode{
+                    .next = &.{
+                        SyntaxTreeNode{
+                            .loopback = .Jump,
+                            .build = currentNode.build_after,
+                        },
+                    },
+                });
+                printstack(loopbackStack);
             },
             .Self => {
-                //std.debug.print("lb:{?s} - ", .{currentNode.debug});
+                std.debug.print("self:{?s} - ", .{currentNode.debug});
                 try loopbackStack.append(gpa, currentNode);
-                //printstack(loopbackStack);
+                printstack(loopbackStack);
             },
             .Master => loopbackStack.append(gpa, currentNode),
             .Jump => {
                 const last = loopbackStack.pop() orelse return CompilerError.InvalidStackPop;
                 currentNode = last;
-                //std.debug.print("jump => [{?s}] - ", .{currentNode.debug});
-                //printstack(loopbackStack);
+
+                if (currentNode.loopback == .After) {
+                    currentNode.next = currentNode.after;
+                }
+                std.debug.print("jump => [{?s}] - ", .{currentNode.debug});
+                printstack(loopbackStack);
                 continue :mainloop;
             },
             .JumpPrevious => {
                 _ = loopbackStack.pop();
                 currentNode = loopbackStack.pop() orelse return CompilerError.InvalidStackPop;
-                //std.debug.print("popjump => [{?s}] - ", .{currentNode.debug});
-                //printstack(loopbackStack);
+
+                std.debug.print("popjump => [{?s}] - ", .{currentNode.debug});
+                printstack(loopbackStack);
                 continue :mainloop;
             },
             .None => {},
             .End => {},
+            .BranchAfter => {},
         };
 
-        for (currentNode.next) |*next| {
+        for (currentNode.next, 0..) |*next, i| {
             const result_err = next.*.isMatch(tokens);
 
             if (result_err) |result| {
+                if (currentNode.loopback == .BranchAfter) {
+                    var copy = currentNode;
+                    copy.next = copy.after[i..];
+                    copy.tokens = .Current;
+                    copy.debug = null;
+                    copy.loopback = .None;
+                    try loopbackStack.append(gpa, copy);
+                    std.debug.print("branch #{} => [{?s}] - ", .{ i, copy.debug });
+                    printstack(loopbackStack);
+                }
+
                 tokens = tokens[result.len..];
-                currentNode = next;
+                currentNode = next.*;
                 if (currentNode.build != null) {
-                    currentNode.build.?(ctx, result);
+                    if (currentNode.tokens == .Saved) {
+                        currentNode.build.?(ctx, savedTokensStack.pop() orelse @panic("out of saved tokens"));
+                    } else {
+                        currentNode.build.?(ctx, result);
+                    }
+                }
+                if (currentNode.tokens == .Save) {
+                    try savedTokensStack.append(gpa, result);
                 }
                 continue :mainloop;
             } else |_| {
-                //std.debug.print("checking next...\n", .{});
+                std.debug.print("checking next...\n", .{});
                 continue;
             }
         }
@@ -150,4 +218,143 @@ pub fn traverseNodes(ctx: *Context, startNode: SyntaxTreeNode, startTokens: [][]
 
         return SyntaxTreeNode.MatchError.DoesNotMatch;
     }
+}
+
+pub fn buildPrintMessage(ctx: *Context, tokens: [][]const u8) void {
+    const message = tokens[3];
+    const message_nt = ctx.gpa.dupeZ(u8, message[1 .. message.len - 1]) catch @panic("OOM");
+    defer ctx.gpa.free(message_nt);
+    const str = ctx.builder.globalStringPtr(message_nt, "message");
+    ctx.buildPrintS(str);
+    ctx.clearResult();
+}
+
+pub fn buildMultiplyEq(ctx: *Context, _: [][]const u8) void {
+    const LHS = ctx.getFromStack().getValue(ctx);
+    const RHS_ref = ctx.getFromStack();
+
+    switch (RHS_ref) {
+        .ref => {},
+        else => @panic("MulEq RHS must be a ref!"),
+    }
+
+    const res = ctx.builder.mul(LHS, RHS_ref.getValue(ctx), "");
+    ctx.vars.put(RHS_ref.ref, res) catch @panic("OOM");
+    ctx.setResult(res);
+    std.debug.print("muleq done\n", .{});
+}
+
+pub fn buildMultiply(ctx: *Context, _: [][]const u8) void {
+    const LHS = ctx.getFromStack().getValue(ctx);
+    const RHS = ctx.getFromStack().getValue(ctx);
+
+    const res = ctx.builder.mul(LHS, RHS, "");
+    ctx.setResult(res);
+    std.debug.print("mul done\n", .{});
+}
+
+pub fn buildIntDecl(ctx: *Context, tokens: [][]const u8) void {
+    const var_name = tokens[4];
+    const value = ctx.getFromStack().getValue(ctx);
+
+    const ptr = ctx.builder.allocaDupeZ(.Int32(), var_name, ctx.gpa);
+    _ = ctx.builder.store(value, ptr);
+    ctx.setLoadedVar(var_name, ptr);
+    ctx.clearResult();
+
+    std.debug.print("declaration\n", .{});
+}
+
+pub fn buildPrintResult(ctx: *Context, _: [][]const u8) void {
+    ctx.buildPrintD(ctx.getResult());
+    ctx.clearResult();
+}
+
+pub fn buildPrintVar(ctx: *Context, tokens: [][]const u8) void {
+    const var_name = tokens[4];
+    const bvar = ctx.getVar(var_name);
+    ctx.buildPrintD(bvar);
+    ctx.clearResult();
+}
+
+pub fn buildVariablePush(ctx: *Context, tokens: [][]const u8) void {
+    const var_name = tokens[0];
+    std.debug.print("pushing var {s}\n", .{var_name});
+    ctx.pushRefToStack(var_name);
+}
+
+pub fn buildConstPush(ctx: *Context, tokens: [][]const u8) void {
+    const value_str = tokens[0];
+    const value_int = std.fmt.parseInt(u32, value_str, 10) catch @panic("invalid");
+    const value = llvm.Value.constInt32(value_int);
+    std.debug.print("pushing const {}\n", .{value_int});
+    ctx.pushValueToStack(value);
+}
+
+pub fn buildResultPush(ctx: *Context, _: [][]const u8) void {
+    ctx.pushResultToStack();
+}
+
+pub fn buildCopyPush(ctx: *Context, _: [][]const u8) void {
+    ctx.varStack.append(ctx.gpa, ctx.varStack.getLast()) catch @panic("OOM");
+}
+
+pub fn buildPrintS(ctx: *Context, value: llvm.Value) void {
+    const printf = ctx.module.getFn("printf");
+    const fmt = ctx.module.getGlobal("fmt_s");
+    _ = ctx.builder.call(printf, &.{ fmt, value }, "");
+}
+
+pub fn buildPrintD(ctx: *Context, value: llvm.Value) void {
+    const printf = ctx.module.getFn("printf");
+    const fmt = ctx.module.getGlobal("fmt_d");
+    _ = ctx.builder.call(printf, &.{ fmt, value }, "");
+}
+
+pub fn pushValueToStack(ctx: *Context, value: llvm.Value) void {
+    ctx.varStack.append(ctx.gpa, .{ .value = value }) catch @panic("OOM");
+}
+
+pub fn pushRefToStack(ctx: *Context, ref: []const u8) void {
+    ctx.varStack.append(ctx.gpa, .{ .ref = ref }) catch @panic("OOM");
+}
+
+pub fn getResult(ctx: *Context) llvm.Value {
+    return ctx.result orelse @panic("no result to give!");
+}
+
+pub fn getVar(ctx: *Context, var_name: []const u8) llvm.Value {
+    return ctx.vars.get(var_name) orelse @panic("variable was not declared");
+}
+
+pub fn setVar(ctx: *Context, var_name: []const u8, value: llvm.Value) void {
+    ctx.vars.put(var_name, value) catch @panic("OOM");
+}
+
+pub fn setLoadedVar(ctx: *Context, var_name: []const u8, ptr: llvm.Value) void {
+    const lvar = ctx.builder.load2(llvm.Type.Int32(), ptr, "");
+    ctx.vars.put(var_name, lvar) catch @panic("OOM");
+}
+
+pub fn getAndLoadValue(ctx: *Context, var_name: []const u8) llvm.Value {
+    const ptr = ctx.getVar(var_name);
+    return ctx.builder.load2(ptr, "");
+}
+
+pub fn getFromStack(ctx: *Context) ValOrRef {
+    return ctx.varStack.pop() orelse @panic("out of stack");
+}
+
+pub fn pushResultToStack(ctx: *Context) void {
+    if (ctx.result != null) {
+        ctx.pushValueToStack(ctx.result.?);
+    } else @panic("result is null");
+}
+
+pub fn clearResult(ctx: *Context) void {
+    ctx.result = null;
+}
+
+pub fn setResult(ctx: *Context, value: llvm.Value) void {
+    ctx.result = value;
 }

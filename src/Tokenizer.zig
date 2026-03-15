@@ -16,7 +16,7 @@ const charTypes: [10]CharFamilyType = .{
     .{ .chars = ";" },
     .{ .chars = "." },
     .{ .chars = "," },
-    .{ .chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZéà'ÉÀ", .allowRepeat = true },
+    .{ .chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZéà'ÉÀêÊ", .allowRepeat = true },
     .{ .chars = "0123456789", .allowRepeat = true },
 };
 
@@ -46,7 +46,10 @@ pub fn tokenize(progress: std.Progress.Node, file: []const u8, tokens: *std.Arra
     var i: usize = 0;
     var s: usize = 0;
 
-    var cfam: ?*const CharFamilyType = null;
+    var cfam: ?*const CharFamilyType = getfam(file[0]);
+
+    //std.debug.print("char: {s}\n", .{file[0..1]});
+    //std.debug.print("char: {any}\n", .{cfam});
 
     while (i < file.len) {
         const c = file[i];
@@ -54,12 +57,30 @@ pub fn tokenize(progress: std.Progress.Node, file: []const u8, tokens: *std.Arra
         const fam = getfam(c);
 
         if (fam == null) {
-            std.debug.print("{x}\n", .{c});
+            std.debug.print("code: {x} {x}\n", .{ c, i });
             return TokenizerError.InvalidChar;
         }
 
         if ((cfam == null)) {
             cfam = fam;
+            i += 1;
+            continue;
+        }
+
+        if (cfam.?.codeBlock) {
+            while (file[i] != cfam.?.chars[1]) {
+                i += 1;
+            }
+            if (!cfam.?.discard) {
+                i += 1;
+                const token = file[s..i];
+                //std.debug.print("[{s}]\n", .{token});
+                i -= 1;
+                progress.setCompletedItems(i);
+                tokens.append(gpa, token) catch @panic("OOM");
+            }
+            cfam = null;
+            s = i;
             i += 1;
             continue;
         }
@@ -75,23 +96,6 @@ pub fn tokenize(progress: std.Progress.Node, file: []const u8, tokens: *std.Arra
             cfam = fam;
             s = i;
             i += 1;
-
-            if (cfam.?.codeBlock) {
-                while (file[i] != cfam.?.chars[1]) {
-                    i += 1;
-                }
-                //std.debug.print("[{s}]\n", .{token});
-                if (!cfam.?.discard) {
-                    i += 1;
-                    const token = file[s..i];
-                    i -= 1;
-                    progress.setCompletedItems(i);
-                    tokens.append(gpa, token) catch @panic("OOM");
-                }
-                cfam = null;
-                s = i;
-                i += 1;
-            }
         } else i += 1;
     }
 

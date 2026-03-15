@@ -12,58 +12,79 @@ pub const masterNode: SyntaxTreeNode = .{
     },
 };
 
-pub fn buildPrintMessage(b: *Context, tokens: [][]const u8) void {
-    const message = tokens[3];
-    const printf = b.module.getFn("printf");
-    const fmt = b.module.getGlobal("fmt_s");
-    const message_nt = b.gpa.dupeZ(u8, message[1 .. message.len - 1]) catch @panic("OOM");
-    defer b.gpa.free(message_nt);
-    const str = b.builder.globalStringPtr(message_nt, "message");
-
-    _ = b.builder.call(printf, &.{ fmt, str }, "");
-}
-
-pub fn buildPrintMessage2(b: *Context, tokens: [][]const u8) void {
-    const message = tokens[3];
-    const printf = b.module.getFn("printf");
-    const fmt = b.module.getGlobal("fmt_s");
-    const message_nt = b.gpa.dupeZ(u8, message[1 .. message.len - 1]) catch @panic("OOM");
-    defer b.gpa.free(message_nt);
-    const str = b.builder.globalStringPtr(message_nt, "message");
-
-    _ = b.builder.call(printf, &.{ fmt, str }, "");
-}
-
-pub fn buildIntDecl(ctx: *Context, tokens: [][]const u8) void {
-    const varName = tokens[4];
-    const intValue = tokens[7];
-
-    const value = std.fmt.parseInt(u32, intValue, 10) catch @panic("invalid");
-
-    const varName_nt = ctx.gpa.dupeZ(u8, varName) catch @panic("OOM");
-    defer ctx.gpa.free(varName_nt);
-
-    const c = llvm.Value.constInt32(value);
-    const ptr = ctx.builder.alloca(.Int32(), varName_nt);
-    _ = ctx.builder.store(c, ptr);
-    ctx.vars.put(varName, ptr) catch @panic("fuck");
-}
-
-pub fn buildPrintVar(ctx: *Context, tokens: [][]const u8) void {
-    const message = tokens[1];
-    const printf = ctx.module.getFn("printf");
-    const fmt = ctx.module.getGlobal("fmt_d");
-    const message_nt = ctx.gpa.dupeZ(u8, message) catch @panic("OOM");
-    defer ctx.gpa.free(message_nt);
-    const v = ctx.vars.get(message) orelse @panic("err");
-    const ld = ctx.builder.load2(v, "");
-
-    _ = ctx.builder.call(printf, &.{ fmt, ld }, "");
-}
-
 pub fn buildRet(b: *Context, _: [][]const u8) void {
     _ = b.builder.ret(llvm.Value.constInt32(0));
 }
+
+pub const variableRefNode = SyntaxTreeNode{
+    .debug = "variableRef",
+    .match = &.{fns.variableName},
+    .build = Context.buildVariablePush,
+    .next = &.{
+        SyntaxTreeNode{ .loopback = .Jump },
+    },
+};
+
+pub const resultNode = SyntaxTreeNode{
+    .match = &.{
+        fns.Eq("le").fun,
+        fns.Eq("résultat").fun,
+    },
+    .build = Context.buildResultPush,
+    .next = &.{
+        SyntaxTreeNode{ .loopback = .Jump },
+    },
+};
+
+pub const copyNode = SyntaxTreeNode{
+    .match = &.{
+        fns.Eq("lui").fun,
+        fns.Eq("-").fun,
+        fns.Eq("même").fun,
+    },
+    .build = Context.buildCopyPush,
+    .next = &.{
+        SyntaxTreeNode{ .loopback = .Jump },
+    },
+};
+
+pub const constIntNode = SyntaxTreeNode{
+    .match = &.{
+        fns.integerValue,
+    },
+    .build = Context.buildConstPush,
+    .next = &.{
+        SyntaxTreeNode{ .loopback = .Jump },
+    },
+};
+
+pub const expressionNode = SyntaxTreeNode{
+    .loopback = .Self,
+    .debug = "expression",
+    .next = &.{
+        SyntaxTreeNode{
+            .loopback = .After,
+            .debug_after = "@expression_inner",
+            .debug = "expression_inner",
+            .next = &.{
+                resultNode,
+                copyNode,
+                constIntNode,
+                variableRefNode,
+            },
+            .after = &.{
+                SyntaxTreeNode{
+                    .debug = "fois",
+                    .match = &.{fns.Eq("fois").fun},
+                    .next = &.{
+                        SyntaxTreeNode{ .loopback = .Jump, .build = Context.buildMultiply },
+                    },
+                },
+                SyntaxTreeNode{ .loopback = .JumpPrevious },
+            },
+        },
+    },
+};
 
 pub const enumerationNode = SyntaxTreeNode{
     .debug = "enum",
@@ -71,7 +92,7 @@ pub const enumerationNode = SyntaxTreeNode{
     .next = &.{
         SyntaxTreeNode{
             .match = &.{
-                fns.variable,
+                fns.variableName,
                 fns.Eq(",").fun,
             },
             .next = &.{
@@ -80,9 +101,9 @@ pub const enumerationNode = SyntaxTreeNode{
         },
         SyntaxTreeNode{
             .match = &.{
-                fns.variable,
+                fns.variableName,
                 fns.Eq("et").fun,
-                fns.variable,
+                fns.variableName,
             },
             .next = &.{
                 SyntaxTreeNode{ .loopback = .JumpPrevious },
@@ -90,7 +111,7 @@ pub const enumerationNode = SyntaxTreeNode{
         },
         SyntaxTreeNode{
             .match = &.{
-                fns.variable,
+                fns.variableName,
             },
             .next = &.{
                 SyntaxTreeNode{ .loopback = .JumpPrevious },
@@ -105,15 +126,42 @@ pub const phraseNode = SyntaxTreeNode{
     .next = &.{
         SyntaxTreeNode{
             .debug = "phrase_2",
-            .loopback = .Next,
+            .debug_after = "@phrase_2",
+            .loopback = .After,
             .next = &.{
+                SyntaxTreeNode{
+                    .loopback = .After,
+                    .debug = "mul",
+                    .debug_after = "@mul",
+                    .match = &.{
+                        fns.Eq("multiplier").fun,
+                    },
+                    .next = &.{
+                        variableRefNode,
+                        expressionNode,
+                    },
+                    .after = &.{
+                        SyntaxTreeNode{
+                            .loopback = .JumpAfter,
+                            .build_after = Context.buildMultiplyEq,
+                            .match = &.{fns.Eq("par").fun},
+                            .next = &.{expressionNode},
+                        },
+                        SyntaxTreeNode{
+                            .loopback = .JumpAfter,
+                            .build_after = Context.buildMultiply,
+                            .match = &.{fns.Eq("avec").fun},
+                            .next = &.{expressionNode},
+                        },
+                    },
+                },
                 SyntaxTreeNode{
                     .match = &.{
                         fns.Eq("demander").fun,
                         fns.Eq("un").fun,
                         fns.Eq("nombre").fun,
                         fns.Eq("entier").fun,
-                        fns.variable,
+                        fns.variableName,
                     },
                     .next = &.{
                         SyntaxTreeNode{ .loopback = .Jump },
@@ -124,22 +172,20 @@ pub const phraseNode = SyntaxTreeNode{
                         fns.Eq("afficher").fun,
                         fns.Eq("le").fun,
                         fns.Eq("message").fun,
-                        fns.string,
-                        fns.Eq("avec").fun,
+                        fns.stringValue,
                     },
-                    .build = buildPrintMessage,
+                    .build = Context.buildPrintMessage,
                     .next = &.{
-                        enumerationNode,
+                        SyntaxTreeNode{ .loopback = .Jump },
                     },
                 },
                 SyntaxTreeNode{
                     .match = &.{
                         fns.Eq("afficher").fun,
                         fns.Eq("le").fun,
-                        fns.Eq("message").fun,
-                        fns.string,
+                        fns.Eq("résultat").fun,
                     },
-                    .build = buildPrintMessage,
+                    .build = Context.buildPrintResult,
                     .next = &.{
                         SyntaxTreeNode{ .loopback = .Jump },
                     },
@@ -147,27 +193,39 @@ pub const phraseNode = SyntaxTreeNode{
                 SyntaxTreeNode{
                     .match = &.{
                         fns.Eq("afficher").fun,
-                        fns.variable,
+                        fns.Eq("la").fun,
+                        fns.Eq("valeur").fun,
+                        fns.Eq("de").fun,
+                        fns.variableName,
                     },
-                    .build = buildPrintVar,
+                    .build = Context.buildPrintVar,
                     .next = &.{
                         SyntaxTreeNode{ .loopback = .Jump },
                     },
                 },
                 SyntaxTreeNode{
+                    .debug = "declaration",
+                    .debug_after = "@declaration",
+                    .loopback = .After,
                     .match = &.{
                         fns.Eq("déclarer").fun,
                         fns.Eq("un").fun,
                         fns.Eq("nombre").fun,
                         fns.Eq("entier").fun,
-                        fns.variable,
+                        fns.variableName,
                         fns.Eq("égal").fun,
                         fns.Eq("à").fun,
-                        fns.integer,
                     },
-                    .build = buildIntDecl,
+                    .tokens = .Save,
                     .next = &.{
-                        SyntaxTreeNode{ .loopback = .Jump },
+                        expressionNode,
+                    },
+                    .after = &.{
+                        SyntaxTreeNode{
+                            .loopback = .Jump,
+                            .tokens = .Saved,
+                            .build = Context.buildIntDecl,
+                        },
                     },
                 },
                 SyntaxTreeNode{
@@ -178,31 +236,37 @@ pub const phraseNode = SyntaxTreeNode{
                         fns.Eq("de").fun,
                         fns.Eq("la").fun,
                         fns.Eq("section").fun,
-                        fns.string,
+                        fns.stringValue,
                     },
                     .next = &.{
                         SyntaxTreeNode{ .loopback = .Jump },
                     },
                 },
             },
-            .lbnext = &SyntaxTreeNode{
-                .debug = "phrase_after",
-                .next = &.{
-                    SyntaxTreeNode{
-                        .match = &.{
-                            fns.Eq("et").fun,
-                        },
-                        .next = &.{
-                            SyntaxTreeNode{ .debug = "loop", .loopback = .Jump },
-                        },
+            .after = &.{
+                SyntaxTreeNode{
+                    .match = &.{
+                        fns.Eq("et").fun,
                     },
-                    SyntaxTreeNode{
-                        .match = &.{
-                            fns.Eq(".").fun,
-                        },
-                        .next = &.{
-                            SyntaxTreeNode{ .debug = "phrase_end", .loopback = .JumpPrevious },
-                        },
+                    .next = &.{
+                        SyntaxTreeNode{ .debug = "loop", .loopback = .Jump },
+                    },
+                },
+                SyntaxTreeNode{
+                    .match = &.{
+                        fns.Eq(",").fun,
+                        fns.Eq("puis").fun,
+                    },
+                    .next = &.{
+                        SyntaxTreeNode{ .debug = "loop", .loopback = .Jump },
+                    },
+                },
+                SyntaxTreeNode{
+                    .match = &.{
+                        fns.Eq(".").fun,
+                    },
+                    .next = &.{
+                        SyntaxTreeNode{ .debug = "phrase_end", .loopback = .JumpPrevious },
                     },
                 },
             },
@@ -222,6 +286,7 @@ pub fn buildSectionFn(b: *Context, tokens: [][]const u8) void {
 
 pub const sectionNode = SyntaxTreeNode{
     .debug = "section",
+    .debug_after = "@section",
     .match = &.{
         fns.Eq("---").fun,
         fns.Eq("section").fun,
@@ -229,22 +294,19 @@ pub const sectionNode = SyntaxTreeNode{
         fns.Eq("---").fun,
     },
     .build = buildSectionFn,
-    .loopback = .Next,
+    .loopback = .After,
     .next = &.{
         phraseNode,
     },
-    .lbnext = &SyntaxTreeNode{
-        .debug = "section_end",
-        .next = &.{
-            SyntaxTreeNode{
-                .loopback = .End,
-                .match = &.{
-                    fns.Eq("---").fun,
-                    fns.Eq("---").fun,
-                },
-                .build = buildRet,
-                .next = &.{SyntaxTreeNode{ .loopback = .Jump }},
+    .after = &.{
+        SyntaxTreeNode{
+            .loopback = .End,
+            .match = &.{
+                fns.Eq("---").fun,
+                fns.Eq("---").fun,
             },
+            .build = buildRet,
+            .next = &.{SyntaxTreeNode{ .loopback = .Jump }},
         },
     },
 };
