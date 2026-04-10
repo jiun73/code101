@@ -2,6 +2,7 @@
 
 demander un nombre entier i et
 effectuer les étapes de la section "est un nombre premier" avec x égal à i et
+dire "allo" et
 afficher le résultat.
 
 --- ---
@@ -14,11 +15,11 @@ Résultat:
 - vrai ou faux;
 
 Étape 1:
-    si x est égal à 0 ou x est égal à 1 alors le résultat est vrai, sinon déclarez un entier n égal à 2.
+    si x est égal à 0 ou x est égal à 1 alors le résultat est faux, sinon déclarez un entier n égal à 2.
 
 Étape 2:
     si x modulo n n'est pas égal à 0 alors incrémenter n et recommencer l'étape 2,
-    sauf si x est égal à n dans ce cas le résultat est vrai,
+    sauf si la racine carré de x est plus petit ou égal à n dans ce cas le résultat est vrai,
     sinon le résultat est faux.
 
 --- ---

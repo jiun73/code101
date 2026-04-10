@@ -13,6 +13,7 @@ const LoopType = enum {
     Jump,
     JumpAfter,
     JumpPrevious,
+    Jump2Previous,
 };
 
 const TokenUsageType = enum { Current, Save, Saved };

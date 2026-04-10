@@ -58,6 +58,62 @@ pub const constIntNode = SyntaxTreeNode{
     },
 };
 
+pub const sqrtNode = SyntaxTreeNode{
+    .match = &.{
+        fns.Eq("la").fun,
+        fns.Eq("racine").fun,
+        fns.Eq("carrée").fun,
+        fns.Eq("de").fun,
+    },
+    .build = Context.pushSquareRootOp,
+    .next = &.{SyntaxTreeNode{ .loopback = .JumpPrevious }},
+};
+
+pub const expressionOpNode = SyntaxTreeNode{
+    .loopback = .Self,
+    .debug = "expression_op",
+    .next = &.{
+        .{
+            .debug = "fois",
+            .match = &.{fns.Eq("fois").fun},
+            .next = &.{
+                .{ .loopback = .JumpPrevious, .build = Context.pushMulOp },
+            },
+        },
+        .{
+            .debug = "fois",
+            .match = &.{ fns.Eq("multiplié").fun, fns.Eq("par").fun },
+            .next = &.{
+                .{ .loopback = .JumpPrevious, .build = Context.pushMulOp },
+            },
+        },
+        .{
+            .debug = "plus",
+            .match = &.{fns.Eq("plus").fun},
+            .next = &.{
+                .{ .loopback = .JumpPrevious, .build = Context.pushAddOp },
+            },
+        },
+        .{
+            .debug = "square",
+            .match = &.{ fns.Eq("au").fun, fns.Eq("carré").fun },
+            .build = Context.pushSquareOp,
+            .next = &.{
+                .{ .loopback = .Jump },
+            },
+        },
+        .{
+            .match = &.{fns.Eq(",").fun},
+            .loopback = .Jump,
+            .build = Context.resolveOpStack,
+        },
+        .{
+            .loopback = .Jump2Previous,
+            .build = Context.resolveOpStack,
+        },
+    },
+};
+
 pub const expressionNode = SyntaxTreeNode{
     .loopback = .Self,
     .debug = "expression",
@@ -67,21 +123,13 @@ pub const expressionNode = SyntaxTreeNode{
             .debug_after = "@expression_inner",
             .debug = "expression_inner",
             .next = &.{
+                sqrtNode,
                 resultNode,
                 copyNode,
                 constIntNode,
                 variableRefNode,
             },
-            .after = &.{
-                SyntaxTreeNode{
-                    .debug = "fois",
-                    .match = &.{fns.Eq("fois").fun},
-                    .next = &.{
-                        SyntaxTreeNode{ .loopback = .Jump, .build = Context.buildMultiply },
-                    },
-                },
-                SyntaxTreeNode{ .loopback = .JumpPrevious },
-            },
+            .after = &.{expressionOpNode},
         },
     },
 };
@@ -124,11 +172,22 @@ pub const phraseNode = SyntaxTreeNode{
     .debug = "phrase",
     .loopback = .Self,
     .next = &.{
-        SyntaxTreeNode{
+        .{
             .debug = "phrase_2",
             .debug_after = "@phrase_2",
             .loopback = .After,
             .next = &.{
+                SyntaxTreeNode{
+                    .loopback = .JumpAfter,
+                    .debug = "calculer",
+                    .match = &.{
+                        fns.Eq("calculer").fun,
+                    },
+                    .build_after = Context.buildSetLastAsReturn,
+                    .next = &.{
+                        expressionNode,
+                    },
+                },
                 SyntaxTreeNode{
                     .loopback = .After,
                     .debug = "mul",

@@ -178,6 +178,14 @@ pub const Type = struct {
         return .toZig(core.LLVMInt64Type());
     }
 
+    pub fn Float() Type {
+        return .toZig(core.LLVMFloatType());
+    }
+
+    pub fn Double() Type {
+        return .toZig(core.LLVMDoubleType());
+    }
+
     pub fn Ptr(t: Type) Type {
         return .toZig(core.LLVMPointerType(t.toC(), 0));
     }
@@ -260,6 +268,14 @@ pub const Value = struct {
         return .toZig(core.LLVMConstInt(Type.Int32().toC(), value, 1));
     }
 
+    pub fn constFloat(value: f32) Value {
+        return .toZig(core.LLVMConstReal(Type.Float().toC(), value));
+    }
+
+    pub fn constDouble(value: f64) Value {
+        return .toZig(core.LLVMConstReal(Type.Double().toC(), value));
+    }
+
     pub fn constInt64(value: u64) Value {
         return .toZig(core.LLVMConstInt(Type.Int64().toC(), value, 1));
     }
@@ -312,6 +328,10 @@ pub const Builder = struct {
 
     pub fn mul(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
         return .toZig(core.LLVMBuildMul(builder.toC(), LHS.toC(), RHS.toC(), retName));
+    }
+
+    pub fn fmul(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildFMul(builder.toC(), LHS.toC(), RHS.toC(), retName));
     }
 
     pub fn add(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {

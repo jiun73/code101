@@ -21,6 +21,8 @@ const ValOrRef = union(enum) {
     }
 };
 
+const Op = enum { Add, Mul, Square, SquareRoot, None };
+
 const VNode = struct {
     next: []const u8,
     build: ?SyntaxTreeNode.BuildFn = null,
@@ -35,6 +37,7 @@ counter: u32,
 
 vars: std.StringHashMap(llvm.Value),
 varStack: std.ArrayList(ValOrRef),
+opStack: std.ArrayList(Op),
 result: ?llvm.Value,
 
 pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node) Context {
@@ -49,8 +52,11 @@ pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node) Context {
     const builder = llvm.Builder.create();
 
     _ = module.addFn("printf", .create(llvm.Type.Int8(), &.{llvm.Type.Int8().Ptr()}, true));
+    _ = module.addFn("llvm.sqrt.f64", .create(llvm.Type.Double(), &.{llvm.Type.Double()}, false));
+    _ = module.addFn("llvm.cbrt.f64", .create(llvm.Type.Double(), &.{llvm.Type.Double()}, false));
+    _ = module.addFn("llvm.pow.f64", .create(llvm.Type.Double(), &.{llvm.Type.Double()}, false));
 
-    const fmt_d = llvm.Value.constString("%d\n", false);
+    const fmt_d = llvm.Value.constString("%.2f\n", false);
     _ = module.addGlobal(fmt_d.getType(), "fmt_d").setInitializer(fmt_d).setGlobalConstant(true).setLinkage(.LLVMInternalLinkage).setUnnamedAddr(true);
 
     const fmt_s = llvm.Value.constString("%s\n", false);
@@ -58,6 +64,7 @@ pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node) Context {
 
     const vars = std.StringHashMap(llvm.Value).init(gpa);
     const varStack = std.ArrayList(ValOrRef).initCapacity(gpa, 32) catch @panic("OOM");
+    const opStack = std.ArrayList(Op).initCapacity(gpa, 32) catch @panic("OOM");
 
     return .{
         .progressNode = progressNode,
@@ -67,11 +74,12 @@ pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node) Context {
         .builder = builder,
         .vars = vars,
         .varStack = varStack,
+        .opStack = opStack,
         .result = null,
     };
 }
 
-pub fn toAsm(builder: *Context) void {
+pub fn toAsm(ctx: *Context) void {
     const triple = llvm.TargetMachine.getDefaultTargetTriple();
     const trg = llvm.Target.getFromTriple(triple);
     const cpu = llvm.TargetMachine.getHostCPUName();
@@ -82,14 +90,15 @@ pub fn toAsm(builder: *Context) void {
     const pm = llvm.PassManager.create();
     const outfile = "output";
 
-    target_machine.EmitToFile(builder.module, outfile, .LLVMAssemblyFile);
-    pm.run(builder.module);
+    target_machine.EmitToFile(ctx.module, outfile, .LLVMAssemblyFile);
+    pm.run(ctx.module);
 }
 
-pub fn deinit(builder: *Context) void {
-    builder.vars.deinit();
-    builder.varStack.deinit(builder.gpa);
-    builder.progressNode.end();
+pub fn deinit(ctx: *Context) void {
+    ctx.vars.deinit();
+    ctx.varStack.deinit(ctx.gpa);
+    ctx.opStack.deinit(ctx.gpa);
+    ctx.progressNode.end();
 }
 
 const CompilerError = error{ NoLbNextNode, InvalidStackPop };
@@ -173,6 +182,15 @@ pub fn traverseNodes(ctx: *Context, startNode: SyntaxTreeNode, startTokens: [][]
                 printstack(loopbackStack);
                 continue :mainloop;
             },
+            .Jump2Previous => {
+                _ = loopbackStack.pop();
+                _ = loopbackStack.pop();
+                currentNode = loopbackStack.pop() orelse return CompilerError.InvalidStackPop;
+
+                std.debug.print("popjump => [{?s}] - ", .{currentNode.debug});
+                printstack(loopbackStack);
+                continue :mainloop;
+            },
             .None => {},
             .End => {},
             .BranchAfter => {},
@@ -238,26 +256,75 @@ pub fn buildMultiplyEq(ctx: *Context, _: [][]const u8) void {
         else => @panic("MulEq RHS must be a ref!"),
     }
 
-    const res = ctx.builder.mul(LHS, RHS_ref.getValue(ctx), "");
+    const res = ctx.builder.fmul(LHS, RHS_ref.getValue(ctx), "");
     ctx.vars.put(RHS_ref.ref, res) catch @panic("OOM");
     ctx.setResult(res);
     std.debug.print("muleq done\n", .{});
 }
 
 pub fn buildMultiply(ctx: *Context, _: [][]const u8) void {
+    const res = ctx.doMul();
+    ctx.setResult(res);
+    std.debug.print("mul done\n", .{});
+}
+
+pub fn doMul(ctx: *Context) llvm.Value {
     const LHS = ctx.getFromStack().getValue(ctx);
     const RHS = ctx.getFromStack().getValue(ctx);
 
-    const res = ctx.builder.mul(LHS, RHS, "");
-    ctx.setResult(res);
-    std.debug.print("mul done\n", .{});
+    std.debug.print("mul\n", .{});
+
+    return ctx.builder.fmul(LHS, RHS, "");
+}
+
+pub fn doAdd(ctx: *Context) llvm.Value {
+    const LHS = ctx.getFromStack().getValue(ctx);
+    const RHS = ctx.getFromStack().getValue(ctx);
+
+    std.debug.print("add\n", .{});
+
+    return ctx.builder.fadd(LHS, RHS, "");
+}
+
+pub fn doSquare(ctx: *Context) llvm.Value {
+    const val = ctx.getFromStack().getValue(ctx);
+
+    std.debug.print("square\n", .{});
+
+    return ctx.builder.fmul(val, val, "");
+}
+
+pub fn doSquareRoot(ctx: *Context) llvm.Value {
+    const value = ctx.getFromStack().getValue(ctx);
+
+    std.debug.print("root\n", .{});
+
+    const sqrt = ctx.module.getFn("llvm.sqrt.f64");
+    return ctx.builder.call(sqrt, &.{value}, "");
+}
+
+pub fn doOp(ctx: *Context, op: Op) void {
+    switch (op) {
+        .Mul => ctx.pushValueToStack(ctx.doMul()),
+        .Add => ctx.pushValueToStack(ctx.doAdd()),
+        .Square => ctx.pushValueToStack(ctx.doSquare()),
+        .SquareRoot => ctx.pushValueToStack(ctx.doSquareRoot()),
+        .None => {},
+    }
+}
+
+pub fn resolveOpStack(ctx: *Context, _: [][]const u8) void {
+    while (ctx.opStack.items.len > 0) {
+        const op = ctx.opStack.pop() orelse unreachable;
+        ctx.doOp(op);
+    }
 }
 
 pub fn buildIntDecl(ctx: *Context, tokens: [][]const u8) void {
     const var_name = tokens[4];
     const value = ctx.getFromStack().getValue(ctx);
 
-    const ptr = ctx.builder.allocaDupeZ(.Int32(), var_name, ctx.gpa);
+    const ptr = ctx.builder.allocaDupeZ(.Double(), var_name, ctx.gpa);
     _ = ctx.builder.store(value, ptr);
     ctx.setLoadedVar(var_name, ptr);
     ctx.clearResult();
@@ -285,10 +352,16 @@ pub fn buildVariablePush(ctx: *Context, tokens: [][]const u8) void {
 
 pub fn buildConstPush(ctx: *Context, tokens: [][]const u8) void {
     const value_str = tokens[0];
-    const value_int = std.fmt.parseInt(u32, value_str, 10) catch @panic("invalid");
-    const value = llvm.Value.constInt32(value_int);
+    const value_int = std.fmt.parseFloat(f64, value_str) catch @panic("invalid");
+    const value = llvm.Value.constDouble(value_int);
     std.debug.print("pushing const {}\n", .{value_int});
     ctx.pushValueToStack(value);
+}
+
+pub fn buildSetLastAsReturn(ctx: *Context, _: [][]const u8) void {
+    const value = ctx.getFromStack().getValue(ctx);
+    if (ctx.varStack.items.len > 1) @panic("stack was not entirely consummed");
+    ctx.setResult(value);
 }
 
 pub fn buildResultPush(ctx: *Context, _: [][]const u8) void {
@@ -332,7 +405,7 @@ pub fn setVar(ctx: *Context, var_name: []const u8, value: llvm.Value) void {
 }
 
 pub fn setLoadedVar(ctx: *Context, var_name: []const u8, ptr: llvm.Value) void {
-    const lvar = ctx.builder.load2(llvm.Type.Int32(), ptr, "");
+    const lvar = ctx.builder.load2(llvm.Type.Double(), ptr, "");
     ctx.vars.put(var_name, lvar) catch @panic("OOM");
 }
 
@@ -349,6 +422,26 @@ pub fn pushResultToStack(ctx: *Context) void {
     if (ctx.result != null) {
         ctx.pushValueToStack(ctx.result.?);
     } else @panic("result is null");
+}
+
+pub fn pushOp(ctx: *Context, op: Op) void {
+    ctx.opStack.append(ctx.gpa, op) catch @panic("OOM");
+}
+
+pub fn pushMulOp(ctx: *Context, _: [][]const u8) void {
+    ctx.pushOp(.Mul);
+}
+
+pub fn pushAddOp(ctx: *Context, _: [][]const u8) void {
+    ctx.pushOp(.Add);
+}
+
+pub fn pushSquareOp(ctx: *Context, _: [][]const u8) void {
+    ctx.pushOp(.Square);
+}
+
+pub fn pushSquareRootOp(ctx: *Context, _: [][]const u8) void {
+    ctx.pushOp(.SquareRoot);
 }
 
 pub fn clearResult(ctx: *Context) void {
