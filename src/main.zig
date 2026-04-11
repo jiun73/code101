@@ -1,22 +1,21 @@
 const std = @import("std");
-const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
+const llvm = @import("llvm");
+const impl = @import("impl");
 const fns = @import("fns.zig");
 const nodes = @import("nodes.zig");
-const Context = @import("Context.zig");
-const Tokenizer = @import("Tokenizer.zig");
 const ex = @import("ex.zig");
 
 pub fn processFileContents(gpa: std.mem.Allocator, file: []const u8) !void {
     const progressNode = std.Progress.start(.{ .root_name = "Compilation" });
 
-    var ctx = Context.init(gpa, progressNode);
+    var ctx = impl.Context.init(gpa, progressNode, file);
     var tokens = std.ArrayList([]const u8).initCapacity(gpa, 128) catch @panic("OOM");
     defer tokens.deinit(gpa);
     defer ctx.deinit();
 
     const tkNode = progressNode.start("Tokenize", file.len);
 
-    try Tokenizer.tokenize(tkNode, file, &tokens, gpa);
+    try impl.Tokenizer.tokenize(tkNode, file, &tokens, gpa);
 
     tkNode.end();
 
@@ -26,10 +25,10 @@ pub fn processFileContents(gpa: std.mem.Allocator, file: []const u8) !void {
 
     emitNode.end();
 
-    ctx.module.printToFile("output.ll");
+    ctx.builder.module.printToFile("output.ll");
     //ctx.toAsm();
 
-    var child = std.process.Child.init(&.{ "clang", "output.ll", "-o", "output" }, gpa);
+    var child = std.process.Child.init(&.{ "clang", "output.ll", "-o", "output", "-Wno-override-module" }, gpa);
     _ = child.spawnAndWait() catch @panic("");
 
     var child2 = std.process.Child.init(&.{"./output"}, gpa);
@@ -65,7 +64,6 @@ pub fn compile(path: [:0]const u8) !void {
 }
 
 pub fn main() !void {
-    //ex.e();
     var general_allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = general_allocator.deinit();
     const gpa = general_allocator.allocator();
@@ -80,6 +78,11 @@ pub fn main() !void {
         return;
     } else if (args.len == 2) {
         std.log.info("no output specfied. using default output", .{});
+        llvm.initializeAllTargetInfos();
+        llvm.initializeAllTargetMCs();
+        llvm.initializeAllTargets();
+        llvm.initializeNativeAsmParser();
+        llvm.initializeNativeTarget();
         try compile(args[1]);
     }
 }

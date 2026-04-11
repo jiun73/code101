@@ -1,4 +1,5 @@
 const std = @import("std");
+const util = @import("tok.util.zig");
 
 const CharFamilyType = struct {
     chars: []const u8,
@@ -20,20 +21,11 @@ const charTypes: [10]CharFamilyType = .{
     .{ .chars = "0123456789", .allowRepeat = true },
 };
 
-pub fn isoneof(char: u8, list: []const u8) bool {
-    var i: usize = 0;
-    while (i < list.len) {
-        if (char == list[i]) return true;
-        i += 1;
-    }
-    return false;
-}
-
 pub fn getfam(char: u8) ?*const CharFamilyType {
     for (&charTypes) |*charType| {
         if (charType.codeBlock) {
             if (char == charType.chars[0]) return charType;
-        } else if (isoneof(char, charType.chars)) {
+        } else if (util.isoneof(char, charType.chars)) {
             return charType;
         }
     }

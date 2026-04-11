@@ -4,7 +4,7 @@ const target = llvm.target;
 const types = llvm.types;
 const core = llvm.core;
 
-const b = @import("llvm.zig");
+const b = @import("llvm");
 
 pub fn e() void {
     // Initialize LLVM

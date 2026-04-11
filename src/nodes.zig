@@ -1,8 +1,9 @@
 const std = @import("std");
-const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
+const impl = @import("impl");
+const SyntaxTreeNode = impl.SyntaxTreeNode;
+const Context = impl.Context;
 const fns = @import("fns.zig");
-const Context = @import("Context.zig");
-const llvm = @import("llvm.zig");
+const llvm = @import("llvm");
 
 pub const masterNode: SyntaxTreeNode = .{
     .debug = "master",
@@ -11,10 +12,6 @@ pub const masterNode: SyntaxTreeNode = .{
         sectionNode,
     },
 };
-
-pub fn buildRet(b: *Context, _: [][]const u8) void {
-    _ = b.builder.ret(llvm.Value.constInt32(0));
-}
 
 pub const variableRefNode = SyntaxTreeNode{
     .debug = "variableRef",
@@ -65,7 +62,7 @@ pub const sqrtNode = SyntaxTreeNode{
         fns.Eq("carrée").fun,
         fns.Eq("de").fun,
     },
-    .build = Context.pushSquareRootOp,
+    .build = &Context.pushOpFn(.SquareRoot),
     .next = &.{SyntaxTreeNode{ .loopback = .JumpPrevious }},
 };
 
@@ -77,27 +74,27 @@ pub const expressionOpNode = SyntaxTreeNode{
             .debug = "fois",
             .match = &.{fns.Eq("fois").fun},
             .next = &.{
-                .{ .loopback = .JumpPrevious, .build = Context.pushMulOp },
+                .{ .loopback = .JumpPrevious, .build = Context.pushOpFn(.Mul) },
             },
         },
         .{
             .debug = "fois",
             .match = &.{ fns.Eq("multiplié").fun, fns.Eq("par").fun },
             .next = &.{
-                .{ .loopback = .JumpPrevious, .build = Context.pushMulOp },
+                .{ .loopback = .JumpPrevious, .build = Context.pushOpFn(.Mul) },
             },
         },
         .{
             .debug = "plus",
             .match = &.{fns.Eq("plus").fun},
             .next = &.{
-                .{ .loopback = .JumpPrevious, .build = Context.pushAddOp },
+                .{ .loopback = .JumpPrevious, .build = Context.pushOpFn(.Add) },
             },
         },
         .{
             .debug = "square",
             .match = &.{ fns.Eq("au").fun, fns.Eq("carré").fun },
-            .build = Context.pushSquareOp,
+            .build = Context.pushOpFn(.Square),
             .next = &.{
                 .{ .loopback = .Jump },
             },
@@ -105,11 +102,11 @@ pub const expressionOpNode = SyntaxTreeNode{
         .{
             .match = &.{fns.Eq(",").fun},
             .loopback = .Jump,
-            .build = Context.resolveOpStack,
+            .build = Context.resolveExpression,
         },
         .{
             .loopback = .Jump2Previous,
-            .build = Context.resolveOpStack,
+            .build = Context.endExpression,
         },
     },
 };
@@ -183,7 +180,7 @@ pub const phraseNode = SyntaxTreeNode{
                     .match = &.{
                         fns.Eq("calculer").fun,
                     },
-                    .build_after = Context.buildSetLastAsReturn,
+                    .build_after = Context.endExpression,
                     .next = &.{
                         expressionNode,
                     },
@@ -283,7 +280,7 @@ pub const phraseNode = SyntaxTreeNode{
                         SyntaxTreeNode{
                             .loopback = .Jump,
                             .tokens = .Saved,
-                            .build = Context.buildIntDecl,
+                            .build = Context.buildDeclare,
                         },
                     },
                 },
@@ -333,13 +330,13 @@ pub const phraseNode = SyntaxTreeNode{
     },
 };
 
-pub fn buildSectionFn(b: *Context, tokens: [][]const u8) void {
+pub fn buildSectionFn(ctx: *Context, tokens: [][]const u8) !void {
     const fnName = tokens[2];
 
     if (std.mem.eql(u8, fnName, "principale")) {
-        const fun = b.module.addFn("main", .create(llvm.Type.Int32(), &.{ llvm.Type.Int32(), llvm.Type.Int8().Ptr().Ptr() }, false));
+        const fun = ctx.builder.module.addFn("main", .create(llvm.Type.Int32(), &.{ llvm.Type.Int32(), llvm.Type.Int8().Ptr().Ptr() }, false));
         const entry = fun.appendBasicBlock("entry");
-        b.builder.positionAtEnd(entry);
+        ctx.builder.ir.positionAtEnd(entry);
     } else {}
 }
 
@@ -364,7 +361,7 @@ pub const sectionNode = SyntaxTreeNode{
                 fns.Eq("---").fun,
                 fns.Eq("---").fun,
             },
-            .build = buildRet,
+            .build = Context.buildRet,
             .next = &.{SyntaxTreeNode{ .loopback = .Jump }},
         },
     },

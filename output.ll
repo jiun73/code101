@@ -19,10 +19,7 @@ entry:
   %i = alloca double, align 8
   store double 4.000000e+00, ptr %i, align 8
   %2 = load double, ptr %i, align 8
-  %3 = call double @llvm.sqrt.f64(double 2.000000e+00)
-  %4 = fmul double %3, 4.000000e+00
-  %5 = fmul double 8.000000e+00, %4
-  %6 = call i8 (ptr, ...) @printf(ptr @fmt_d, double %5)
+  %3 = call i8 (ptr, ...) @printf(ptr @fmt_d, double 1.380000e+02)
   ret i32 0
 }
 

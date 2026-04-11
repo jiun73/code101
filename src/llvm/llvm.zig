@@ -1,5 +1,7 @@
-const llvm = @import("llvm");
+const llvm = @import("cllvm");
 const std = @import("std");
+pub const C = llvm;
+pub const clang = @import("clang");
 pub const target = llvm.target;
 pub const types = llvm.types;
 pub const core = llvm.core;
@@ -7,6 +9,7 @@ pub const jit = llvm.jit;
 pub const error_handling = llvm.error_handling;
 pub const errors = llvm.errors;
 pub const target_machine = llvm.target_machine;
+pub const util = @import("llvm.util.zig");
 
 pub fn initializeNativeTarget() void {
     _ = target.LLVMInitializeNativeTarget();

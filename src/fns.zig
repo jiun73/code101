@@ -1,5 +1,5 @@
 const std = @import("std");
-const tok = @import("Tokenizer.zig");
+const tok = @import("impl").tok_util;
 
 pub fn Eq(comptime eqq: []const u8) type {
     return struct {
