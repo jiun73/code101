@@ -102,6 +102,11 @@ pub fn add(b: *Builder, LHS: ValueRef, RHS: ValueRef) Error!Value {
     return b.ir.fadd(try LHS.getValue(b), try RHS.getValue(b), "");
 }
 
+pub fn sub(b: *Builder, RHS: ValueRef, LHS: ValueRef) Error!Value {
+    std.debug.print("sub\n", .{});
+    return b.ir.fsub(try LHS.getValue(b), try RHS.getValue(b), "");
+}
+
 pub fn square(b: *Builder, OP: ValueRef) Error!Value {
     std.debug.print("square\n", .{});
     const val = try OP.getValue(b);

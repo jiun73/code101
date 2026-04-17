@@ -1,6 +1,10 @@
 --- section principale ---
 
 déclarer un nombre entier i égal à 4 et calculer 4 multiplié par 2, plus 130 moins 50 et 
-afficher le résultat.
+afficher le résultat et
+afficher i moins 2 et
+afficher le résultat et
+calculer le reste de la division de i plus 3 par 4 moins 2
+afficher le message "bonjour" .
 
 --- ---

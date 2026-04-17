@@ -1,8 +1,7 @@
 const std = @import("std");
 const Context = @import("Context.zig");
 
-const SyntaxTreeNode = @This();
-
+pub const SyntaxTreeNode = @This();
 const LoopType = enum {
     None,
     Master,
@@ -17,12 +16,20 @@ const LoopType = enum {
 };
 
 const TokenUsageType = enum { Current, Save, Saved };
-
 pub const MatchFn = *const fn ([]const u8) bool;
 pub const BuildFn = *const fn (builder: *Context, [][]const u8) anyerror!void;
+pub const MatchError = error{ OutOfTokens, DoesNotMatch };
 
-debug: ?[:0]const u8 = null,
-debug_after: ?[:0]const u8 = null,
+const DebugInfo = struct {
+    label: [:0]const u8,
+    label_after: [:0]const u8,
+
+    pub fn init(comptime label: [:0]const u8) DebugInfo {
+        return .{ .label = label, .label_after = "@" ++ label };
+    }
+};
+
+debug: ?DebugInfo = null,
 match: []const MatchFn = &.{},
 build: ?BuildFn = null,
 build_after: ?BuildFn = null,
@@ -30,8 +37,6 @@ tokens: TokenUsageType = .Current,
 next: []const SyntaxTreeNode = &.{},
 after: []const SyntaxTreeNode = &.{},
 loopback: LoopType = .None,
-
-pub const MatchError = error{ OutOfTokens, DoesNotMatch };
 
 pub fn isMatch(node: SyntaxTreeNode, tokens: [][]const u8) MatchError![][]const u8 {
     if (node.match.len == 0) return &.{};

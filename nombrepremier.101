@@ -1,12 +1,3 @@
---- section principale ---
-
-demander un nombre entier i et
-effectuer les étapes de la section "est un nombre premier" avec x égal à i et
-dire "allo" et
-afficher le résultat.
-
---- ---
-
 --- section "est un nombre premier" ---
 
 Prérequis:
@@ -23,3 +14,12 @@ Résultat:
     sinon le résultat est faux.
 
 --- ---
+
+--- section principale ---
+
+demander un nombre entier i et
+effectuer les étapes de la section "est un nombre premier" avec x égal à i et
+afficher le résultat.
+
+--- ---
+

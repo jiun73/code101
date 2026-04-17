@@ -3,7 +3,7 @@ const llvm = @import("llvm");
 const target = llvm.target;
 const types = llvm.types;
 const core = llvm.core;
-const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
+const SyntaxTreeNode = @import("SyntaxTreeNode.zig").SyntaxTreeNode;
 const OpStack = @import("OpStack.zig");
 const Builder = @import("Builder.zig");
 
@@ -133,7 +133,7 @@ pub fn traverseNodes(ctx: *Context, startNode: SyntaxTreeNode, startTokens: [][]
                 var copy = currentNode;
                 copy.next = copy.after;
                 copy.tokens = .Current;
-                copy.debug = copy.debug_after;
+                copy.debug = .{ .label = copy.debug.?.label_after, .label_after = copy.debug.?.label_after };
                 copy.loopback = .None;
                 try loopbackStack.append(gpa, copy);
                 //printstack(loopbackStack);
@@ -296,7 +296,7 @@ pub fn buildCopyPush(ctx: *Context, _: [][]const u8) !void {
 
 pub fn buildDeclare(ctx: *Context, tokens: [][]const u8) !void {
     const var_name = tokens[4];
-    ctx.builder.declare(ctx.gpa, var_name, try ctx.opStack.resolveResult(ctx.gpa, &ctx.builder));
+    ctx.builder.declare(ctx.gpa, var_name, try ctx.opStack.getResult());
 }
 
 // pub fn pushResultToStack(ctx: *Context) void {
@@ -321,6 +321,8 @@ pub fn buildRet(ctx: *Context, _: [][]const u8) !void {
 pub fn endExpression(ctx: *Context, _: [][]const u8) !void {
     try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
     try ctx.opStack.setResult(&ctx.builder);
+    ctx.opStack.clear();
+    std.debug.print("expr end\n", .{});
 }
 
 pub fn resolveExpression(ctx: *Context, _: [][]const u8) !void {
