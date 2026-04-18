@@ -21,7 +21,7 @@ const charTypes: [10]CharFamilyType = .{
     .{ .chars = "0123456789", .allowRepeat = true },
 };
 
-pub fn getfam(char: u8) ?*const CharFamilyType {
+pub fn getFamily(char: u8) ?*const CharFamilyType {
     for (&charTypes) |*charType| {
         if (charType.codeBlock) {
             if (char == charType.chars[0]) return charType;
@@ -34,6 +34,11 @@ pub fn getfam(char: u8) ?*const CharFamilyType {
 
 pub const TokenizerError = error{InvalidChar};
 
+const DEBUG_TOKEN = false;
+fn debugPrint(comptime fmt: []const u8, args: anytype) void {
+    if (DEBUG_TOKEN) std.debug.print(fmt, args);
+}
+
 pub fn tokenize(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8) TokenizerError!std.ArrayList([]const u8) {
     var tokens = std.ArrayList([]const u8).initCapacity(gpa, 128) catch @panic("OOM");
 
@@ -42,18 +47,18 @@ pub fn tokenize(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source:
     var i: usize = 0;
     var s: usize = 0;
 
-    var cfam: ?*const CharFamilyType = getfam(source[0]);
+    var cfam: ?*const CharFamilyType = getFamily(source[0]);
 
-    //std.debug.print("char: {s}\n", .{file[0..1]});
-    //std.debug.print("char: {any}\n", .{cfam});
+    debugPrint("char: {s}\n", .{source[0..1]});
+    debugPrint("char: {any}\n", .{cfam});
 
     while (i < source.len) {
         const c = source[i];
 
-        const fam = getfam(c);
+        const fam = getFamily(c);
 
         if (fam == null) {
-            //std.debug.print("code: {x} {x}\n", .{ c, i });
+            debugPrint("code: {x} {x}\n", .{ c, i });
             return TokenizerError.InvalidChar;
         }
 
@@ -70,7 +75,7 @@ pub fn tokenize(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source:
             if (!cfam.?.discard) {
                 i += 1;
                 const token = source[s..i];
-                //std.debug.print("[{s}]\n", .{token});
+                debugPrint("[{s}]\n", .{token});
                 i -= 1;
                 progress.setCompletedItems(i);
                 tokens.append(gpa, token) catch @panic("OOM");
@@ -84,7 +89,7 @@ pub fn tokenize(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source:
         if ((!cfam.?.allowRepeat) or cfam != fam) {
             if (!cfam.?.discard) {
                 const token = source[s..i];
-                //std.debug.print("[{s}]\n", .{token});
+                debugPrint("[{s}]\n", .{token});
                 progress.setCompletedItems(i);
                 tokens.append(gpa, token) catch @panic("OOM");
             }
@@ -97,7 +102,7 @@ pub fn tokenize(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source:
 
     if (!cfam.?.discard) {
         const token = source[s..i];
-        //std.debug.print("[{s}]\n", .{token});
+        debugPrint("[{s}]\n", .{token});
         progress.setCompletedItems(i);
         tokens.append(gpa, token) catch @panic("OOM");
     }

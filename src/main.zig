@@ -8,8 +8,8 @@ pub fn compile(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: 
     const emitNode = progressNode.start("LLVM Emit IR", tokens.items.len);
     const module = llvm.Module.create("programme");
     var ctx = impl.Context.init(gpa, progressNode, source, module);
+    defer ctx.deinit();
     try ctx.build(gpa, tokens.items);
-    ctx.deinit();
     emitNode.end();
     return module;
 }
@@ -88,10 +88,6 @@ pub fn main() !void {
         return;
     };
 
-    if (output_path_opt == null) {
-        std.log.info("no output specified. using default output", .{});
-    }
-
     const output_path = if (output_path_opt != null) output_path_opt.? else "output.ll";
 
     llvm.initializeNativeTarget();
@@ -108,6 +104,9 @@ pub fn main() !void {
         const main_fn = exec.findFunction("main");
         _ = exec.runFunctionAsMain(main_fn, 0, &.{});
     } else {
+        if (output_path_opt == null) {
+            std.log.info("no output specified. using default output", .{});
+        }
         const out_nt = gpa.dupeZ(u8, output_path) catch @panic("OOM");
         module.printToFile(out_nt);
         gpa.free(out_nt);

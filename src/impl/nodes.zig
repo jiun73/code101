@@ -14,7 +14,7 @@ pub const masterNode: SyntaxTreeNode = .{
 
 pub const variableRefNode = SyntaxTreeNode{
     .debug = .init("variableRef"),
-    .match = &.{fns.variableName},
+    .match = &.{fns.single(fns.variableName)},
     .build = Context.buildVariablePush,
     .next = &.{
         SyntaxTreeNode{ .loopback = .Jump },
@@ -39,7 +39,7 @@ pub const copyNode = SyntaxTreeNode{
 
 pub const constIntNode = SyntaxTreeNode{
     .match = &.{
-        fns.integerValue,
+        fns.single(fns.integerValue),
     },
     .build = Context.buildConstPush,
     .next = &.{
@@ -217,13 +217,11 @@ pub const phraseNode = SyntaxTreeNode{
                     },
                 },
                 .{
-                    .match = fns.eql("demander un nombre entier") ++ .{fns.variableName},
-                    .next = &.{
-                        SyntaxTreeNode{ .loopback = .Jump },
-                    },
+                    .match = fns.eql("demander un nombre entier") ++ .{fns.single(fns.variableName)},
+                    .next = SyntaxTreeNode.jumpl,
                 },
                 .{
-                    .match = fns.eql("afficher le message") ++ .{fns.stringValue},
+                    .match = fns.eql("afficher le message") ++ .{fns.single(fns.stringValue)},
                     .build = Context.buildPrintMessage,
                     .next = &.{
                         SyntaxTreeNode{ .loopback = .Jump },
@@ -237,7 +235,7 @@ pub const phraseNode = SyntaxTreeNode{
                     },
                 },
                 .{
-                    .match = fns.eql("afficher la valeur de") ++ .{fns.variableName},
+                    .match = fns.eql("afficher la valeur de") ++ .{fns.single(fns.variableName)},
                     .build = Context.buildPrintVar,
                     .next = &.{
                         SyntaxTreeNode{ .loopback = .Jump },
@@ -255,15 +253,7 @@ pub const phraseNode = SyntaxTreeNode{
                 SyntaxTreeNode{
                     .debug = .init("declaration"),
                     .loopback = .After,
-                    .match = &.{
-                        fns.eq("déclarer"),
-                        fns.eq("un"),
-                        fns.eq("nombre"),
-                        fns.eq("entier"),
-                        fns.variableName,
-                        fns.eq("égal"),
-                        fns.eq("à"),
-                    },
+                    .match = fns.eql("déclarer un nombre entier") ++ .{fns.single(fns.variableName)} ++ fns.eql("égal à"),
                     .tokens = .Save,
                     .next = &.{
                         expressionNode,
@@ -277,15 +267,8 @@ pub const phraseNode = SyntaxTreeNode{
                     },
                 },
                 SyntaxTreeNode{
-                    .match = &.{
-                        fns.eq("effectuer"),
-                        fns.eq("les"),
-                        fns.eq("étapes"),
-                        fns.eq("de"),
-                        fns.eq("la"),
-                        fns.eq("section"),
-                        fns.stringValue,
-                    },
+                    .match = fns.eql("effectuer les étapes de la section") ++ .{fns.single(fns.stringValue)},
+                    .build = Context.buildCall,
                     .next = &.{
                         SyntaxTreeNode{ .loopback = .Jump },
                     },
@@ -305,9 +288,7 @@ pub const phraseNode = SyntaxTreeNode{
                     },
                 },
                 .{
-                    .match = &.{
-                        fns.eq("."),
-                    },
+                    .match = fns.eql("."),
                     .next = &.{
                         SyntaxTreeNode{ .debug = .init("phrase_end"), .loopback = .JumpPrevious },
                     },
@@ -317,19 +298,9 @@ pub const phraseNode = SyntaxTreeNode{
     },
 };
 
-pub fn buildSectionFn(ctx: *Context, tokens: [][]const u8) !void {
-    const fnName = tokens[2];
-
-    if (std.mem.eql(u8, fnName, "principale")) {
-        const fun = ctx.builder.module.addFn("main", .create(llvm.Type.Int32(), &.{ llvm.Type.Int32(), llvm.Type.Int8().Ptr().Ptr() }, false));
-        const entry = fun.appendBasicBlock("entry");
-        ctx.builder.ir.positionAtEnd(entry);
-    } else {}
-}
-
 pub const sectionNode = SyntaxTreeNode{
-    .match = fns.eql("--- section") ++ .{fns.sectionLabel} ++ fns.eql("---"),
-    .build = buildSectionFn,
+    .match = fns.eql("--- section") ++ .{fns.single(fns.sectionLabel)} ++ fns.eql("---"),
+    .build = Context.buildSection,
     .loopback = .After,
     .next = &.{
         phraseNode,

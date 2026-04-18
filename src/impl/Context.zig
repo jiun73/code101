@@ -15,7 +15,6 @@ gpa: std.mem.Allocator,
 counter: u32,
 
 source: []const u8,
-vars: std.StringHashMap(llvm.Value),
 opStack: OpStack,
 builder: Builder,
 
@@ -47,10 +46,10 @@ pub fn getPositionalInfo(data: []const u8, char: *const u8) struct { charnbr: us
     const slc = getSliceTo(data, char);
     const ln = getLineNumber(slc);
 
-    const iln = @intFromPtr(ln.lastLn) - @intFromPtr(data.ptr) + 1;
+    const iln = @intFromPtr(ln.lastLn) -| @intFromPtr(data.ptr) +| 1;
     const line = getLineSlice(data[iln..]);
 
-    return .{ .linenbr = ln.cnt, .charnbr = @intFromPtr(char) - @intFromPtr(ln.lastLn) - 1, .line = line };
+    return .{ .linenbr = ln.cnt, .charnbr = @intFromPtr(char) -| @intFromPtr(ln.lastLn) -| 1, .line = line };
 }
 
 pub fn printLineError(ctx: *Context, char: *const u8) void {
@@ -73,7 +72,6 @@ pub fn printLineError(ctx: *Context, char: *const u8) void {
 }
 
 pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8, module: llvm.Module) Context {
-    const vars = std.StringHashMap(llvm.Value).init(gpa);
     const opStack = OpStack.init(gpa);
     const builder = Builder.init(gpa, module);
 
@@ -82,20 +80,16 @@ pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []c
         .progressNode = progressNode,
         .gpa = gpa,
         .counter = 0,
-        .vars = vars,
         .opStack = opStack,
         .builder = builder,
     };
 }
 
 pub fn deinit(ctx: *Context) void {
-    ctx.vars.deinit();
     ctx.opStack.deinit(ctx.gpa);
     ctx.builder.deinit();
     ctx.progressNode.end();
 }
-
-const CompilerError = error{ NoLbNextNode, InvalidStackPop };
 
 fn printstack(loopbackStack: std.ArrayList(SyntaxTreeNode)) void {
     std.debug.print("stack:", .{});
@@ -109,142 +103,9 @@ pub fn build(ctx: *Context, gpa: std.mem.Allocator, tokens: [][]const u8) !void 
     return ctx.traverseNodes(gpa, nodes.masterNode, tokens);
 }
 
-fn traverseNodes(ctx: *Context, gpa: std.mem.Allocator, startNode: SyntaxTreeNode, startTokens: [][]const u8) !void {
-    var tokens = startTokens;
-    var currentNode: SyntaxTreeNode = startNode;
-    var loopbackStack = std.ArrayList(SyntaxTreeNode).initCapacity(gpa, 32) catch @panic("OOM");
-    defer loopbackStack.deinit(gpa);
-
-    var savedTokensStack = std.ArrayList([][]const u8).initCapacity(gpa, 32) catch @panic("OOM");
-    defer savedTokensStack.deinit(gpa);
-
-    mainloop: while (true) {
-        ctx.progressNode.setCompletedItems(tokens.len);
-        if (currentNode.debug != null) {
-            //std.debug.print("current node: {s} ({any} tokens)\n", .{ currentNode.debug.?, tokens.len });
-        }
-
-        if (tokens.len == 0) {
-            if (currentNode.loopback == .Master or currentNode.loopback == .End) {
-                return;
-            } else {
-                return SyntaxTreeNode.MatchError.OutOfTokens;
-            }
-        }
-
-        try switch (currentNode.loopback) {
-            .After => {
-                //std.debug.print("after:{?s} - ", .{currentNode.debug});
-                var copy = currentNode;
-                copy.next = copy.after;
-                copy.tokens = .Current;
-                copy.debug = .{ .label = copy.debug.?.label_after, .label_after = copy.debug.?.label_after };
-                copy.loopback = .None;
-                try loopbackStack.append(gpa, copy);
-                //printstack(loopbackStack);
-            },
-            .JumpAfter => {
-                //std.debug.print("jumpafter:{?s} - ", .{currentNode.debug});
-                try loopbackStack.append(gpa, SyntaxTreeNode{
-                    .next = &.{
-                        SyntaxTreeNode{
-                            .loopback = .Jump,
-                            .build = currentNode.build_after,
-                        },
-                    },
-                });
-                //printstack(loopbackStack);
-            },
-            .Self => {
-                //std.debug.print("self:{?s} - ", .{currentNode.debug});
-                try loopbackStack.append(gpa, currentNode);
-                //printstack(loopbackStack);
-            },
-            .Master => loopbackStack.append(gpa, currentNode),
-            .Jump => {
-                const last = loopbackStack.pop() orelse return CompilerError.InvalidStackPop;
-                currentNode = last;
-
-                if (currentNode.loopback == .After) {
-                    currentNode.next = currentNode.after;
-                }
-                //std.debug.print("jump => [{?s}] - ", .{currentNode.debug});
-                //printstack(loopbackStack);
-                continue :mainloop;
-            },
-            .JumpPrevious => {
-                _ = loopbackStack.pop();
-                currentNode = loopbackStack.pop() orelse return CompilerError.InvalidStackPop;
-
-                //std.debug.print("popjump => [{?s}] - ", .{currentNode.debug});
-                //printstack(loopbackStack);
-                continue :mainloop;
-            },
-            .Jump2Previous => {
-                _ = loopbackStack.pop();
-                _ = loopbackStack.pop();
-                currentNode = loopbackStack.pop() orelse return CompilerError.InvalidStackPop;
-
-                //std.debug.print("popjump => [{?s}] - ", .{currentNode.debug});
-                //printstack(loopbackStack);
-                continue :mainloop;
-            },
-            .None => {},
-            .End => {},
-            .BranchAfter => {},
-        };
-
-        for (currentNode.next, 0..) |*next, i| {
-            const result_err = next.*.isMatch(tokens);
-
-            if (result_err) |result| {
-                if (currentNode.loopback == .BranchAfter) {
-                    var copy = currentNode;
-                    copy.next = copy.after[i..];
-                    copy.tokens = .Current;
-                    copy.debug = null;
-                    copy.loopback = .None;
-                    try loopbackStack.append(gpa, copy);
-                    //std.debug.print("branch #{} => [{?s}] - ", .{ i, copy.debug });
-                    //printstack(loopbackStack);
-                }
-                const tok_before = tokens;
-                tokens = tokens[result.len..];
-                currentNode = next.*;
-                if (currentNode.build != null) {
-                    if (currentNode.tokens == .Saved) {
-                        const toks = savedTokensStack.pop() orelse @panic("out of saved tokens");
-                        const err = currentNode.build.?(ctx, toks);
-                        err catch {
-                            ctx.printLineError(@ptrCast(tok_before[0].ptr));
-                            return err;
-                        };
-                    } else {
-                        const err = currentNode.build.?(ctx, result);
-                        err catch {
-                            ctx.printLineError(@ptrCast(tok_before[0].ptr));
-                            return err;
-                        };
-                    }
-                }
-                if (currentNode.tokens == .Save) {
-                    try savedTokensStack.append(gpa, result);
-                }
-                continue :mainloop;
-            } else |_| {
-                //std.debug.print("checking next...\n", .{});
-                continue;
-            }
-        }
-
-        if (currentNode.debug != null) {
-            //std.debug.print("no match found for node {s}. exiting\n", .{currentNode.debug.?});
-        }
-
-        ctx.printLineError(@ptrCast(tokens[0].ptr));
-
-        return SyntaxTreeNode.MatchError.DoesNotMatch;
-    }
+const DEBUG_CTX = false;
+fn debugPrint(comptime fmt: []const u8, args: anytype) void {
+    if (DEBUG_CTX) std.debug.print(fmt, args);
 }
 
 pub fn buildPrintMessage(ctx: *Context, tokens: [][]const u8) !void {
@@ -332,4 +193,21 @@ pub fn endExpression(ctx: *Context, _: [][]const u8) !void {
 
 pub fn resolveExpression(ctx: *Context, _: [][]const u8) !void {
     try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
+}
+
+pub fn buildSection(ctx: *Context, tokens: [][]const u8) !void {
+    const name = tokens[2];
+
+    if (std.mem.eql(u8, name, "principale")) {
+        try ctx.builder.mainSection();
+    } else {
+        const str = name[1 .. name.len - 1];
+        try ctx.builder.section(ctx.gpa, str);
+    }
+}
+
+pub fn buildCall(ctx: *Context, tokens: [][]const u8) !void {
+    const name = tokens[6];
+    const str = name[1 .. name.len - 1];
+    try ctx.builder.call(str);
 }

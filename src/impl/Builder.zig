@@ -30,6 +30,7 @@ pub const Error = error{VariableNotDeclared};
 module: llvm.Module,
 ir: llvm.Builder,
 vars: std.StringHashMap(Value),
+fns: std.StringHashMap(llvm.Function),
 
 printfFn: llvm.Function,
 sqrtFn: llvm.Function,
@@ -54,6 +55,7 @@ pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
     const fmt_s_val = module.addGlobal(fmt_s.getType(), "fmt_s").setInitializer(fmt_s).setGlobalConstant(true).setLinkage(.LLVMInternalLinkage).setUnnamedAddr(true);
 
     const vars = std.StringHashMap(Value).init(gpa);
+    const fns = std.StringHashMap(llvm.Function).init(gpa);
 
     return .{
         .printfFn = printfFn,
@@ -65,11 +67,13 @@ pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
         .ir = builder,
         .fmtD = fmt_d_val,
         .fmtS = fmt_s_val,
+        .fns = fns,
     };
 }
 
 pub fn deinit(b: *Builder) void {
     b.vars.deinit();
+    b.fns.deinit();
     b.ir.dispose();
 }
 
@@ -141,4 +145,30 @@ pub fn declare(b: *Builder, gpa: std.mem.Allocator, var_name: []const u8, value:
     const ptr = b.ir.allocaDupeZ(.Double(), var_name, gpa);
     _ = b.ir.store(value, ptr);
     b.setLoadedVar(var_name, ptr);
+}
+
+pub fn mainSection(b: *Builder) !void {
+    //const fnName = tokens[2];
+
+    const fun = b.module.addFn("main", .create(llvm.Type.Int32(), &.{ llvm.Type.Int32(), llvm.Type.Int8().Ptr().Ptr() }, false));
+    const entry = fun.appendBasicBlock("entry");
+    b.ir.positionAtEnd(entry);
+}
+
+pub fn section(b: *Builder, gpa: std.mem.Allocator, name: []const u8) !void {
+    //const fnName = tokens[2];
+    const name_nt = gpa.dupeZ(u8, name) catch @panic("OOM");
+    defer gpa.free(name_nt);
+
+    const fun = b.module.addFn(name_nt, .create(llvm.Type.Int32(), &.{ llvm.Type.Int32(), llvm.Type.Int8().Ptr().Ptr() }, false));
+    const entry = fun.appendBasicBlock("entry");
+    b.ir.positionAtEnd(entry);
+    b.fns.put(name, fun) catch @panic("OOM");
+}
+
+pub fn call(b: *Builder, name: []const u8) !void {
+    std.debug.print("getting fn {s}\n", .{name});
+    const fun = b.fns.get(name) orelse @panic("wrong fns");
+
+    _ = b.ir.call(fun, &.{}, "");
 }
