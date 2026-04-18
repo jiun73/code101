@@ -39,8 +39,7 @@ powFn: llvm.Function,
 fmtS: llvm.Value,
 fmtD: llvm.Value,
 
-pub fn init(gpa: std.mem.Allocator) Builder {
-    const module = llvm.Module.create("programme");
+pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
     const builder = llvm.Builder.create();
 
     const printfFn = module.addFn("printf", .create(llvm.Type.Int8(), &.{llvm.Type.Int8().Ptr()}, true));
@@ -72,7 +71,6 @@ pub fn init(gpa: std.mem.Allocator) Builder {
 pub fn deinit(b: *Builder) void {
     b.vars.deinit();
     b.ir.dispose();
-    b.module.dispose();
 }
 
 pub fn getVar(b: *Builder, var_name: []const u8) Error!Value {

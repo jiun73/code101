@@ -1,5 +1,5 @@
 const std = @import("std");
-const tok = @import("impl").tok_util;
+const tok = @import("tok.util.zig");
 
 const StrMatchFn = fn (str: []const u8) bool;
 const MatchFn = *const fn ([]const u8) bool;

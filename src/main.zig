@@ -1,88 +1,101 @@
 const std = @import("std");
 const llvm = @import("llvm");
 const impl = @import("impl");
-const fns = @import("fns.zig");
-const nodes = @import("nodes.zig");
-const ex = @import("ex.zig");
 
-pub fn processFileContents(gpa: std.mem.Allocator, file: []const u8) !void {
-    const progressNode = std.Progress.start(.{ .root_name = "Compilation" });
-
-    var ctx = impl.Context.init(gpa, progressNode, file);
-    var tokens = std.ArrayList([]const u8).initCapacity(gpa, 128) catch @panic("OOM");
+pub fn compile(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8) !llvm.Module {
+    var tokens = try impl.Tokenizer.tokenize(gpa, progressNode, source);
     defer tokens.deinit(gpa);
-    defer ctx.deinit();
-
-    const tkNode = progressNode.start("Tokenize", file.len);
-
-    try impl.Tokenizer.tokenize(tkNode, file, &tokens, gpa);
-
-    tkNode.end();
-
     const emitNode = progressNode.start("LLVM Emit IR", tokens.items.len);
-
-    try ctx.traverseNodes(nodes.masterNode, tokens.items, gpa);
-
+    const module = llvm.Module.create("programme");
+    var ctx = impl.Context.init(gpa, progressNode, source, module);
+    try ctx.build(gpa, tokens.items);
+    ctx.deinit();
     emitNode.end();
-
-    ctx.builder.module.printToFile("output.ll");
-    //ctx.toAsm();
-
-    var child = std.process.Child.init(&.{ "clang", "output.ll", "-o", "output", "-Wno-override-module" }, gpa);
-    _ = child.spawnAndWait() catch @panic("");
-
-    var child2 = std.process.Child.init(&.{"./output"}, gpa);
-    _ = child2.spawnAndWait() catch @panic("");
+    return module;
 }
 
-pub fn compile(path: [:0]const u8) !void {
-    var general_allocator = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = general_allocator.deinit();
-    const gpa = general_allocator.allocator();
-
-    const max_file_size = 1024 * 1024; // 1 MB
-
-    const file_err = std.fs.cwd().readFileAlloc(gpa, path, max_file_size);
-
-    if (file_err) |file| {
-        defer gpa.free(file); // Remember to free the allocated memory
-        try processFileContents(gpa, file);
-    } else |err| switch (err) {
-        error.FileNotFound => {
-            std.log.err("File not found", .{});
-            return err;
-        },
-        error.FileTooBig => {
-            std.log.err("File too big. 1mb max per file", .{});
-            return err;
-        },
-        else => {
-            std.log.err("Unhandled error", .{});
-            return err;
-        },
-    }
+pub fn readFile(buffer: []u8, path: []const u8) ![]const u8 {
+    return std.fs.cwd().readFile(path, buffer) catch |err| {
+        switch (err) {
+            error.FileNotFound => std.log.err("File not found", .{}),
+            error.FileTooBig => std.log.err("File too big", .{}),
+            else => std.log.err("Unhandled error", .{}),
+        }
+        return err;
+    };
 }
+
+const buffer_size = 1024 * 1024;
+var const_buffer: [buffer_size]u8 = [_]u8{undefined} ** buffer_size;
 
 pub fn main() !void {
     var general_allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = general_allocator.deinit();
     const gpa = general_allocator.allocator();
 
-    const args = std.process.argsAlloc(gpa) catch return;
-    defer std.process.argsFree(gpa, args);
+    const full_args = std.process.argsAlloc(gpa) catch @panic("OOM");
+    defer std.process.argsFree(gpa, full_args);
+    if (full_args.len == 0) return;
+    var args = full_args[1..];
 
     std.log.info("code101", .{});
 
-    if (args.len == 1) {
-        std.log.err("no input specfied.", .{});
+    var input_path_opt: ?[]const u8 = null;
+    const output_path_opt: ?[]const u8 = null;
+    var run: bool = false;
+    var accept_input: bool = true;
+    var consumed: usize = 0;
+
+    while (args.len > 0) {
+        if (std.mem.eql(u8, args[0], "run") and !run and consumed == 0) {
+            llvm.linkInMCJIT();
+            llvm.initializeNativeAsmPrinter();
+
+            run = true;
+            args = args[1..];
+            consumed += 1;
+            accept_input = true;
+            continue;
+        }
+
+        if (accept_input) {
+            input_path_opt = args[0];
+            accept_input = false;
+        } else {
+            std.log.err("invalid argument", .{});
+            return;
+        }
+
+        args = args[1..];
+        consumed += 1;
+    }
+
+    const input_path = input_path_opt orelse {
+        std.log.err("no input specified. exiting.", .{});
         return;
-    } else if (args.len == 2) {
-        std.log.info("no output specfied. using default output", .{});
-        llvm.initializeAllTargetInfos();
-        llvm.initializeAllTargetMCs();
-        llvm.initializeAllTargets();
-        llvm.initializeNativeAsmParser();
-        llvm.initializeNativeTarget();
-        try compile(args[1]);
+    };
+
+    if (output_path_opt == null) {
+        std.log.info("no output specified. using default output", .{});
+    }
+
+    const output_path = if (output_path_opt != null) output_path_opt else "output";
+
+    llvm.initializeNativeTarget();
+    llvm.initializeAllTargetInfos();
+    llvm.initializeNativeAsmParser();
+    //llvm.initializeAllTargetMCs();
+
+    const progressNode = std.Progress.start(.{ .root_name = "Compilation" });
+
+    const source = try readFile(&const_buffer, input_path);
+    const module = try compile(gpa, progressNode, source);
+
+    if (run) {
+        const exec = llvm.ExecutionEngine.createForModule(module);
+        const main_fn = exec.findFunction("main");
+        _ = exec.runFunctionAsMain(main_fn, 0, &.{});
+    } else {
+        module.printToFile(output_path ++ ".ll");
     }
 }

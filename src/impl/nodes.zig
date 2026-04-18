@@ -1,7 +1,6 @@
 const std = @import("std");
-const impl = @import("impl");
-const SyntaxTreeNode = impl.SyntaxTreeNode;
-const Context = impl.Context;
+const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
+const Context = @import("Context.zig");
 const fns = @import("fns.zig");
 const llvm = @import("llvm");
 

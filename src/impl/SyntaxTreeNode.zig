@@ -2,6 +2,7 @@ const std = @import("std");
 const Context = @import("Context.zig");
 
 pub const SyntaxTreeNode = @This();
+
 const LoopType = enum {
     None,
     Master,

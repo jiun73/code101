@@ -34,22 +34,26 @@ pub fn getfam(char: u8) ?*const CharFamilyType {
 
 pub const TokenizerError = error{InvalidChar};
 
-pub fn tokenize(progress: std.Progress.Node, file: []const u8, tokens: *std.ArrayList([]const u8), gpa: std.mem.Allocator) TokenizerError!void {
+pub fn tokenize(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8) TokenizerError!std.ArrayList([]const u8) {
+    var tokens = std.ArrayList([]const u8).initCapacity(gpa, 128) catch @panic("OOM");
+
+    const progress = progressNode.start("Tokenize", source.len);
+
     var i: usize = 0;
     var s: usize = 0;
 
-    var cfam: ?*const CharFamilyType = getfam(file[0]);
+    var cfam: ?*const CharFamilyType = getfam(source[0]);
 
     //std.debug.print("char: {s}\n", .{file[0..1]});
     //std.debug.print("char: {any}\n", .{cfam});
 
-    while (i < file.len) {
-        const c = file[i];
+    while (i < source.len) {
+        const c = source[i];
 
         const fam = getfam(c);
 
         if (fam == null) {
-            std.debug.print("code: {x} {x}\n", .{ c, i });
+            //std.debug.print("code: {x} {x}\n", .{ c, i });
             return TokenizerError.InvalidChar;
         }
 
@@ -60,12 +64,12 @@ pub fn tokenize(progress: std.Progress.Node, file: []const u8, tokens: *std.Arra
         }
 
         if (cfam.?.codeBlock) {
-            while (file[i] != cfam.?.chars[1]) {
+            while (source[i] != cfam.?.chars[1]) {
                 i += 1;
             }
             if (!cfam.?.discard) {
                 i += 1;
-                const token = file[s..i];
+                const token = source[s..i];
                 //std.debug.print("[{s}]\n", .{token});
                 i -= 1;
                 progress.setCompletedItems(i);
@@ -79,7 +83,7 @@ pub fn tokenize(progress: std.Progress.Node, file: []const u8, tokens: *std.Arra
 
         if ((!cfam.?.allowRepeat) or cfam != fam) {
             if (!cfam.?.discard) {
-                const token = file[s..i];
+                const token = source[s..i];
                 //std.debug.print("[{s}]\n", .{token});
                 progress.setCompletedItems(i);
                 tokens.append(gpa, token) catch @panic("OOM");
@@ -92,9 +96,13 @@ pub fn tokenize(progress: std.Progress.Node, file: []const u8, tokens: *std.Arra
     }
 
     if (!cfam.?.discard) {
-        const token = file[s..i];
+        const token = source[s..i];
         //std.debug.print("[{s}]\n", .{token});
         progress.setCompletedItems(i);
         tokens.append(gpa, token) catch @panic("OOM");
     }
+
+    progress.end();
+
+    return tokens;
 }

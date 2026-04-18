@@ -6,6 +6,7 @@ pub const target = llvm.target;
 pub const types = llvm.types;
 pub const core = llvm.core;
 pub const jit = llvm.jit;
+pub const engine = llvm.engine;
 pub const error_handling = llvm.error_handling;
 pub const errors = llvm.errors;
 pub const target_machine = llvm.target_machine;
@@ -13,6 +14,10 @@ pub const util = @import("llvm.util.zig");
 
 pub fn initializeNativeTarget() void {
     _ = target.LLVMInitializeNativeTarget();
+}
+
+pub fn initializeNativeAsmPrinter() void {
+    _ = target.LLVMInitializeNativeAsmPrinter();
 }
 
 pub fn initializeNativeAsmParser() void {
@@ -505,14 +510,14 @@ pub const Context = struct {
     }
 };
 
-pub const LLJitBuilder = struct {
+pub const OrcLLJitBuilder = struct {
     ref: llvm.types.LLVMOrcLLJITBuilderRef,
 
-    pub fn toZig(ref: types.LLVMOrcLLJITBuilderRef) LLJitBuilder {
+    pub fn toZig(ref: types.LLVMOrcLLJITBuilderRef) OrcLLJitBuilder {
         return .{ .ref = ref };
     }
 
-    pub fn toC(t: LLJitBuilder) types.LLVMOrcLLJITBuilderRef {
+    pub fn toC(t: OrcLLJitBuilder) types.LLVMOrcLLJITBuilderRef {
         return t.ref;
     }
 
@@ -520,23 +525,23 @@ pub const LLJitBuilder = struct {
         return .toZig(jit.LLVMOrcCreateLLJITBuilder());
     }
 
-    pub fn dispose(c: LLJitBuilder) void {
+    pub fn dispose(c: OrcLLJitBuilder) void {
         jit.LLVMOrcDisposeLLJITBuilder(c.toC());
     }
 };
 
-pub const LLJit = struct {
+pub const OrcLLJit = struct {
     ref: llvm.types.LLVMOrcLLJITRef,
 
-    pub fn toZig(ref: types.LLVMOrcLLJITRef) LLJit {
+    pub fn toZig(ref: types.LLVMOrcLLJITRef) OrcLLJit {
         return .{ .ref = ref };
     }
 
-    pub fn toC(t: LLJit) types.LLVMOrcLLJITRef {
+    pub fn toC(t: OrcLLJit) types.LLVMOrcLLJITRef {
         return t.ref;
     }
 
-    pub fn create(builder: LLJitBuilder) Context {
+    pub fn create(builder: OrcLLJitBuilder) Context {
         var ref: types.LLVMOrcLLJITRef = undefined;
         jit.LLVMOrcCreateLLJIT(&ref, builder.toC());
         return .toZig(ref);
@@ -544,5 +549,41 @@ pub const LLJit = struct {
 
     pub fn dispose(c: Context) void {
         jit.LLVMOrcDisposeLLJIT(c.toC());
+    }
+};
+
+pub fn linkInMCJIT() void {
+    engine.LLVMLinkInMCJIT();
+}
+
+pub const ExecutionEngine = struct {
+    ref: llvm.types.LLVMExecutionEngineRef,
+
+    pub fn toZig(ref: llvm.types.LLVMExecutionEngineRef) ExecutionEngine {
+        return .{ .ref = ref };
+    }
+
+    pub fn toC(t: ExecutionEngine) llvm.types.LLVMExecutionEngineRef {
+        return t.ref;
+    }
+
+    pub fn createForModule(mod: Module) ExecutionEngine {
+        var ref: llvm.types.LLVMExecutionEngineRef = undefined;
+        if (engine.LLVMCreateExecutionEngineForModule(&ref, mod.toC(), null) == 1) {
+            @panic("error");
+        }
+        return .toZig(ref);
+    }
+
+    pub fn findFunction(exec: ExecutionEngine, name: [:0]const u8) Function {
+        var fun: llvm.types.LLVMValueRef = undefined;
+        if (engine.LLVMFindFunction(exec.toC(), name, &fun) == 1) {
+            @panic("error");
+        }
+        return .toZig(fun);
+    }
+
+    pub fn runFunctionAsMain(exec: ExecutionEngine, fun: Function, argc: c_uint, argv: [][:0]const u8) c_int {
+        return engine.LLVMRunFunctionAsMain(exec.toC(), fun.toC(), argc, @ptrCast(argv), null);
     }
 };

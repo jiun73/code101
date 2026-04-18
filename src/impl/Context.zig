@@ -6,6 +6,7 @@ const core = llvm.core;
 const SyntaxTreeNode = @import("SyntaxTreeNode.zig").SyntaxTreeNode;
 const OpStack = @import("OpStack.zig");
 const Builder = @import("Builder.zig");
+const nodes = @import("nodes.zig");
 
 const Context = @This();
 
@@ -71,10 +72,10 @@ pub fn printLineError(ctx: *Context, char: *const u8) void {
     std.debug.print("^ ici\n", .{});
 }
 
-pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8) Context {
+pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8, module: llvm.Module) Context {
     const vars = std.StringHashMap(llvm.Value).init(gpa);
     const opStack = OpStack.init(gpa);
-    const builder = Builder.init(gpa);
+    const builder = Builder.init(gpa, module);
 
     return .{
         .source = source,
@@ -104,7 +105,11 @@ fn printstack(loopbackStack: std.ArrayList(SyntaxTreeNode)) void {
     std.debug.print("\n", .{});
 }
 
-pub fn traverseNodes(ctx: *Context, startNode: SyntaxTreeNode, startTokens: [][]const u8, gpa: std.mem.Allocator) !void {
+pub fn build(ctx: *Context, gpa: std.mem.Allocator, tokens: [][]const u8) !void {
+    return ctx.traverseNodes(gpa, nodes.masterNode, tokens);
+}
+
+fn traverseNodes(ctx: *Context, gpa: std.mem.Allocator, startNode: SyntaxTreeNode, startTokens: [][]const u8) !void {
     var tokens = startTokens;
     var currentNode: SyntaxTreeNode = startNode;
     var loopbackStack = std.ArrayList(SyntaxTreeNode).initCapacity(gpa, 32) catch @panic("OOM");
