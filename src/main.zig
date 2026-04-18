@@ -41,7 +41,7 @@ pub fn main() !void {
     std.log.info("code101", .{});
 
     var input_path_opt: ?[]const u8 = null;
-    const output_path_opt: ?[]const u8 = null;
+    var output_path_opt: ?[]const u8 = null;
     var run: bool = false;
     var accept_input: bool = true;
     var consumed: usize = 0;
@@ -55,6 +55,19 @@ pub fn main() !void {
             args = args[1..];
             consumed += 1;
             accept_input = true;
+            continue;
+        }
+
+        if (std.mem.eql(u8, args[0], "-o")) {
+            if (args.len < 2) {
+                std.log.err("expected output argument", .{});
+                return;
+            }
+
+            output_path_opt = args[1];
+            args = args[2..];
+            consumed += 2;
+            accept_input = false;
             continue;
         }
 
@@ -79,12 +92,11 @@ pub fn main() !void {
         std.log.info("no output specified. using default output", .{});
     }
 
-    const output_path = if (output_path_opt != null) output_path_opt else "output";
+    const output_path = if (output_path_opt != null) output_path_opt.? else "output.ll";
 
     llvm.initializeNativeTarget();
     llvm.initializeAllTargetInfos();
     llvm.initializeNativeAsmParser();
-    //llvm.initializeAllTargetMCs();
 
     const progressNode = std.Progress.start(.{ .root_name = "Compilation" });
 
@@ -96,6 +108,8 @@ pub fn main() !void {
         const main_fn = exec.findFunction("main");
         _ = exec.runFunctionAsMain(main_fn, 0, &.{});
     } else {
-        module.printToFile(output_path ++ ".ll");
+        const out_nt = gpa.dupeZ(u8, output_path) catch @panic("OOM");
+        module.printToFile(out_nt);
+        gpa.free(out_nt);
     }
 }
