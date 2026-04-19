@@ -15,6 +15,7 @@ pub const Op = enum {
     GreaterThanOrEqualTo,
     LessThanOrEqualTo,
     EqualTo,
+    Store,
 };
 
 varStack: std.ArrayList(Builder.ValueRef),
@@ -116,6 +117,7 @@ pub fn doOp(self: *OpStack, gpa: std.mem.Allocator, b: *Builder, op: Op) (Error 
         .LessThan => {},
         .LessThanOrEqualTo => {},
         .None => {},
+        .Store => _ = try b.store(try self.getVal(), (try self.getVal()).getRef()),
     }
 }
 

@@ -100,7 +100,7 @@ fn printstack(loopbackStack: std.ArrayList(SyntaxTreeNode)) void {
 }
 
 pub fn build(ctx: *Context, gpa: std.mem.Allocator, tokens: [][]const u8) !void {
-    return ctx.traverseNodes(gpa, nodes.masterNode, tokens);
+    return nodes.master.traverse(ctx, gpa, tokens);
 }
 
 const DEBUG_CTX = false;
@@ -133,7 +133,7 @@ pub fn buildPrintResult(ctx: *Context, _: [][]const u8) !void {
 
 pub fn buildPrintVar(ctx: *Context, tokens: [][]const u8) !void {
     const var_name = tokens[4];
-    const value = try ctx.builder.getVar(var_name);
+    const value = try ctx.builder.getAndLoadValue(var_name);
     ctx.builder.printDecimal(value);
     ctx.opStack.clearResult();
 }
@@ -162,7 +162,9 @@ pub fn buildCopyPush(ctx: *Context, _: [][]const u8) !void {
 
 pub fn buildDeclare(ctx: *Context, tokens: [][]const u8) !void {
     const var_name = tokens[4];
-    ctx.builder.declare(ctx.gpa, var_name, try ctx.opStack.getResult());
+    _ = ctx.builder.declare(ctx.gpa, var_name);
+    ctx.opStack.pushRef(ctx.gpa, var_name);
+    ctx.opStack.pushOp(ctx.gpa, .Store);
 }
 
 // pub fn pushResultToStack(ctx: *Context) void {

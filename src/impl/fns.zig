@@ -49,9 +49,57 @@ pub fn matchConstTokensStr(comptime fmt: []const u8) SyntaxTreeNode.MatchFn {
 }
 
 //delcarer un numbre enter [varlbl]
+//aaa [bbb] ccc
 pub fn eql(comptime fmt: []const u8) []const (*const SyntaxTreeNode.MatchFn) {
     comptime {
-        return &.{matchConstTokensStr(fmt)};
+        var cnt = 1;
+        for (fmt) |c| {
+            if (c == ' ') {
+                cnt += 1;
+            }
+        }
+
+        var tokens: [cnt][]const u8 = undefined;
+        var off = 0;
+        var id = 0;
+        for (fmt, 0..) |c, i| {
+            if (c == ' ') {
+                tokens[id] = fmt[off..i];
+                off = i + 1;
+                id += 1;
+            }
+        }
+        tokens[id] = fmt[off..];
+        var fns: []const (*const SyntaxTreeNode.MatchFn) = &.{};
+        var run: []const u8 = "";
+        for (tokens) |token| {
+            if (token[0] == '[' and token[token.len - 1] == ']') {
+                if (run.len != 0) {
+                    fns = fns ++ .{matchConstTokensStr(run[0 .. run.len - 1])};
+                    run = "";
+                }
+
+                const control = token[1 .. token.len - 1];
+
+                if (std.mem.eql(u8, control, "var")) {
+                    fns = fns ++ .{single(variableName)};
+                } else if (std.mem.eql(u8, control, "str")) {
+                    fns = fns ++ .{single(stringValue)};
+                } else if (std.mem.eql(u8, control, "sectionlbl")) {
+                    fns = fns ++ .{single(sectionLabel)};
+                } else if (std.mem.eql(u8, control, "int")) {
+                    fns = fns ++ .{single(integerValue)};
+                } else @compileError("invalid fmt");
+            } else {
+                run = run ++ token ++ " ";
+            }
+        }
+
+        if (run.len != 0) {
+            fns = fns ++ .{matchConstTokensStr(run[0 .. run.len - 1])};
+        }
+
+        return fns;
     }
 }
 

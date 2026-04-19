@@ -17,6 +17,11 @@ pub const ValueRef = union(enum) {
         }
     }
 
+    pub fn getValueLoad(vr: ValueRef, b: *Builder) Error!Value {
+        const value = vr.getValue(b);
+        return b.ir.load2(.Double(), value, "");
+    }
+
     pub fn getRef(vr: ValueRef) Ref {
         switch (vr) {
             .ref => |ref| return ref,
@@ -88,6 +93,11 @@ pub fn setVar(b: *Builder, var_name: []const u8, value: Value) void {
     b.vars.put(var_name, value) catch @panic("OOM");
 }
 
+pub fn store(b: *Builder, RHS: ValueRef, LHS: Ref) Error!Value {
+    std.debug.print("store\n", .{});
+    return b.ir.store(try RHS.getValue(b), try b.getVar(LHS));
+}
+
 pub fn mul(b: *Builder, LHS: ValueRef, RHS: ValueRef) Error!Value {
     std.debug.print("mul\n", .{});
     return b.ir.fmul(try LHS.getValue(b), try RHS.getValue(b), "");
@@ -135,16 +145,17 @@ pub fn setLoadedVar(b: *Builder, var_name: []const u8, ptr: llvm.Value) void {
     b.vars.put(var_name, lvar) catch @panic("OOM");
 }
 
-pub fn getAndLoadValue(b: *Builder, var_name: []const u8) llvm.Value {
-    const ptr = b.getVar(var_name);
-    return b.ir.load2(ptr, "");
+pub fn getAndLoadValue(b: *Builder, var_name: []const u8) Error!llvm.Value {
+    const ptr = try b.getVar(var_name);
+    return b.ir.load2(.Double(), ptr, "");
 }
 
-pub fn declare(b: *Builder, gpa: std.mem.Allocator, var_name: []const u8, value: Value) void {
+pub fn declare(b: *Builder, gpa: std.mem.Allocator, var_name: []const u8) Value {
     std.debug.print("declaration\n", .{});
     const ptr = b.ir.allocaDupeZ(.Double(), var_name, gpa);
-    _ = b.ir.store(value, ptr);
-    b.setLoadedVar(var_name, ptr);
+    //_ = b.ir.store(value, ptr);
+    b.setVar(var_name, ptr);
+    return ptr;
 }
 
 pub fn mainSection(b: *Builder) !void {
