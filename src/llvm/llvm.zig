@@ -338,6 +338,14 @@ pub const Builder = struct {
         return .toZig(core.LLVMBuildMul(builder.toC(), LHS.toC(), RHS.toC(), retName));
     }
 
+    pub fn frem(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildFRem(builder.toC(), LHS.toC(), RHS.toC(), retName));
+    }
+
+    pub fn fdiv(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildFDiv(builder.toC(), LHS.toC(), RHS.toC(), retName));
+    }
+
     pub fn fmul(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
         return .toZig(core.LLVMBuildFMul(builder.toC(), LHS.toC(), RHS.toC(), retName));
     }

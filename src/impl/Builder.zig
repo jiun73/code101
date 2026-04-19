@@ -28,6 +28,13 @@ pub const ValueRef = union(enum) {
             else => @panic("trying to cast value to ref"),
         }
     }
+
+    pub fn print(vr: ValueRef) void {
+        switch (vr) {
+            .ref => |ref| std.debug.print("[{s}]", .{ref}),
+            .value => |val| std.debug.print("[{x}]", .{@intFromPtr(val.ref)}),
+        }
+    }
 };
 
 pub const Error = error{VariableNotDeclared};
@@ -96,6 +103,16 @@ pub fn setVar(b: *Builder, var_name: []const u8, value: Value) void {
 pub fn store(b: *Builder, RHS: ValueRef, LHS: Ref) Error!Value {
     std.debug.print("store\n", .{});
     return b.ir.store(try RHS.getValue(b), try b.getVar(LHS));
+}
+
+pub fn rem(b: *Builder, RHS: ValueRef, LHS: ValueRef) Error!Value {
+    std.debug.print("rem\n", .{});
+    return b.ir.frem(try LHS.getValue(b), try RHS.getValue(b), "");
+}
+
+pub fn div(b: *Builder, RHS: ValueRef, LHS: ValueRef) Error!Value {
+    std.debug.print("mul\n", .{});
+    return b.ir.fdiv(try LHS.getValue(b), try RHS.getValue(b), "");
 }
 
 pub fn mul(b: *Builder, LHS: ValueRef, RHS: ValueRef) Error!Value {

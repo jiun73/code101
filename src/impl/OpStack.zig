@@ -7,6 +7,8 @@ pub const Op = enum {
     Add,
     Sub,
     Mul,
+    Div,
+    Rem,
     Square,
     SquareRoot,
     None,
@@ -67,29 +69,41 @@ pub fn getResult(self: *OpStack) Error!Builder.Value {
     return result.?;
 }
 
+pub fn printstack(self: *OpStack) void {
+    std.debug.print("\tvars: ", .{});
+    for (self.varStack.items) |vr| {
+        vr.print();
+    }
+    std.debug.print("\n\tops:  ", .{});
+    for (self.opStack.items) |op| {
+        std.debug.print("{}", .{op});
+    }
+    std.debug.print("\n", .{});
+}
+
 pub fn setResult(self: *OpStack, b: *Builder) (Error || Builder.Error)!void {
     if (self.varStack.items.len > 1) {
-        std.debug.print("stack: {any}\n", .{self.varStack.items});
+        self.printstack();
         return Error.TooManyLeftover;
     }
     if (self.varStack.items.len < 1) return Error.NoLeftover;
-    std.debug.print("result set\n", .{});
     self.result = try self.varStack.items[0].getValue(b);
+    std.debug.print("result set", .{});
 }
 
 pub fn pushVal(self: *OpStack, gpa: std.mem.Allocator, value: Builder.Value) void {
     self.varStack.append(gpa, .{ .value = value }) catch @panic("OOM");
-    std.debug.print("stack: {any}\n", .{self.varStack.items});
+    self.printstack();
 }
 
 pub fn pushRef(self: *OpStack, gpa: std.mem.Allocator, ref: []const u8) void {
     self.varStack.append(gpa, .{ .ref = ref }) catch @panic("OOM");
-    std.debug.print("stack: {any}\n", .{self.varStack.items});
+    self.printstack();
 }
 
 pub fn push(self: *OpStack, gpa: std.mem.Allocator, vr: Builder.ValueRef) void {
     self.varStack.append(gpa, vr) catch @panic("OOM");
-    std.debug.print("stack: {any}\n", .{self.varStack.items});
+    self.printstack();
 }
 
 pub fn getVal(self: *OpStack) Error!Builder.ValueRef {
@@ -107,6 +121,8 @@ pub fn pushOp(self: *OpStack, gpa: std.mem.Allocator, op: Op) void {
 pub fn doOp(self: *OpStack, gpa: std.mem.Allocator, b: *Builder, op: Op) (Error || Builder.Error)!void {
     switch (op) {
         .Mul => self.pushVal(gpa, try b.mul(try self.getVal(), try self.getVal())),
+        .Div => self.pushVal(gpa, try b.div(try self.getVal(), try self.getVal())),
+        .Rem => self.pushVal(gpa, try b.rem(try self.getVal(), try self.getVal())),
         .Add => self.pushVal(gpa, try b.add(try self.getVal(), try self.getVal())),
         .Sub => self.pushVal(gpa, try b.sub(try self.getVal(), try self.getVal())),
         .Square => self.pushVal(gpa, try b.square(try self.getVal())),
@@ -122,7 +138,8 @@ pub fn doOp(self: *OpStack, gpa: std.mem.Allocator, b: *Builder, op: Op) (Error 
 }
 
 pub fn resolve(self: *OpStack, gpa: std.mem.Allocator, b: *Builder) (Error || Builder.Error)!void {
-    std.debug.print("resolving: stack: {any}\n", .{self.varStack.items});
+    std.debug.print("resolving: \n", .{});
+    self.printstack();
     while (self.opStack.pop()) |op| {
         try self.doOp(gpa, b, op);
     }

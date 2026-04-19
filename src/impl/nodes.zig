@@ -35,7 +35,9 @@ const phrase = SyntaxTreeNode{
             .next(expr_calculer),
             .next(expr_afficher_message),
             .next(expr_afficher_valeur),
+            .next(expr_afficher),
             .next(expr_declarer),
+            .next(expr_effectuer),
         },
         &.{
             .init(.{ .match = fns.eql(".") }),
@@ -70,16 +72,79 @@ const expr_declarer = SyntaxTreeNode{
     },
 };
 
+const expr_effectuer = SyntaxTreeNode{
+    .match = fns.eql("effectuer les étapes de la section [str]"),
+    .build = Context.buildCall,
+};
+
+const expr_afficher = SyntaxTreeNode{
+    .match = fns.eql("afficher"),
+    .groups = &.{
+        &.{.next(expression)},
+        &.{.build(Context.buildPrintResult)},
+    },
+};
+
 const expression = SyntaxTreeNode{
     .debug = .init("expr"),
     .groups = &.{
         &.{
+            .loop(op_sqrt),
+            .loop(op_rem),
+            .next(variableRef),
             .next(constIntNode),
+            .next(result),
         },
         &.{
-            .any(),
+            .prev(op_mul),
+            .prev(op_mul2),
+            .prev(op_add),
+            .prev(op_add2),
+            .prev(op_sub),
+            .prev(op_div),
+            .loop(op_square),
+            .loop(.{
+                .match = fns.eql(","),
+                .build = Context.resolveExpression,
+            }),
+            .build(Context.endExpression),
         },
     },
+};
+
+const op_mul = SyntaxTreeNode{
+    .match = fns.eql("fois"),
+    .build = Context.pushOpFn(.Mul),
+};
+
+const op_mul2 = SyntaxTreeNode{
+    .match = fns.eql("multiplié par"),
+    .build = Context.pushOpFn(.Mul),
+};
+
+const op_div = SyntaxTreeNode{
+    .match = fns.eql("divisé par"),
+    .build = Context.pushOpFn(.Div),
+};
+
+const op_add = SyntaxTreeNode{
+    .match = fns.eql("plus"),
+    .build = Context.pushOpFn(.Add),
+};
+
+const op_add2 = SyntaxTreeNode{
+    .match = fns.eql("additionné à"),
+    .build = Context.pushOpFn(.Add),
+};
+
+const op_sub = SyntaxTreeNode{
+    .match = fns.eql("moins"),
+    .build = Context.pushOpFn(.Sub),
+};
+
+const op_square = SyntaxTreeNode{
+    .match = fns.eql("au carré"),
+    .build = Context.pushOpFn(.Square),
 };
 
 const variableRef = SyntaxTreeNode{
@@ -102,12 +167,24 @@ pub const constIntNode = SyntaxTreeNode{
     .build = Context.buildConstPush,
 };
 
-pub const sqrtNode = SyntaxTreeNode{
+pub const op_sqrt = SyntaxTreeNode{
     .match = fns.eql("la racine carrée de"),
     .build = &Context.pushOpFn(.SquareRoot),
 };
 
-pub const remNode = SyntaxTreeNode{
+pub const op_rem = SyntaxTreeNode{
     .match = fns.eql("le reste de la division de"),
-    .build = &Context.pushOpFn(.SquareRoot),
+    .build = &Context.pushOpFn(.Rem),
+    .groups = &.{
+        &.{
+            .next(variableRef),
+            .next(constIntNode),
+            .next(result),
+        },
+        &.{
+            .init(.{
+                .match = fns.eql("par"),
+            }),
+        },
+    },
 };

@@ -152,8 +152,8 @@ pub fn buildConstPush(ctx: *Context, tokens: [][]const u8) !void {
     ctx.opStack.pushVal(ctx.gpa, value);
 }
 
-pub fn buildResultPush(_: *Context, _: [][]const u8) !void {
-    //ctx.pushResultToStack();
+pub fn buildResultPush(ctx: *Context, _: [][]const u8) !void {
+    ctx.opStack.pushVal(ctx.gpa, ctx.opStack.result.?);
 }
 
 pub fn buildCopyPush(ctx: *Context, _: [][]const u8) !void {
