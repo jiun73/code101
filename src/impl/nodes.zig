@@ -201,9 +201,35 @@ pub const op_rem = SyntaxTreeNode{
             .next(result),
         },
         &.{
-            .init(.{
-                .match = fns.eql("par"),
-            }),
+            .init(.{ .match = fns.eql("par") }),
         },
     },
+};
+
+pub const prerequis = SyntaxTreeNode{
+    .match = fns.eql("Prérequis :"),
+    .groups = &.{},
+};
+
+pub const single_prerequis = SyntaxTreeNode{
+    .match = fns.eql("-"),
+    .groups = &.{
+        &.{
+            .next(.{ .match = fns.eql("[var] ,") }),
+        },
+        &.{
+            .next(type_integer),
+        },
+        &.{
+            .next(.{ .match = fns.eql(";") }),
+        },
+        &.{
+            .loop(.{ .match = fns.eql("-") }),
+            .init(.{ .match = fns.eql("Résultat :") }),
+        },
+    },
+};
+
+pub const type_integer = SyntaxTreeNode{
+    .match = fns.eql("un nombre entier"),
 };
