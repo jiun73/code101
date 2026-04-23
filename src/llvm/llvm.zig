@@ -2,15 +2,39 @@ const llvm = @import("cllvm");
 const std = @import("std");
 pub const C = llvm;
 pub const clang = @import("clang");
+pub const irreader = llvm.irreader;
+pub const linker = llvm.linker;
 pub const target = llvm.target;
 pub const types = llvm.types;
 pub const core = llvm.core;
 pub const jit = llvm.jit;
 pub const engine = llvm.engine;
+pub const support = llvm.support;
 pub const error_handling = llvm.error_handling;
 pub const errors = llvm.errors;
 pub const target_machine = llvm.target_machine;
 pub const util = @import("llvm.util.zig");
+
+pub const Error = error{
+    loadLibraryPermanentlyError,
+    parseIrInContextError,
+    linkError,
+    CouldNotCreateExecutionEngine,
+};
+
+pub fn parseIrInContext(ctx: Context, buff: MemBuff) Error!Module {
+    var mod: types.LLVMModuleRef = undefined;
+    if (irreader.LLVMParseIRInContext(ctx.toC(), buff.toC(), &mod, null) != 0) {
+        return Error.parseIrInContextError;
+    }
+    return .toZig(mod);
+}
+
+pub fn loadLibraryPermanently(path: [:0]const u8) Error!void {
+    if (support.LLVMLoadLibraryPermanently(path) != 0) {
+        return Error.loadLibraryPermanentlyError;
+    }
+}
 
 pub fn initializeNativeTarget() void {
     _ = target.LLVMInitializeNativeTarget();
@@ -36,8 +60,39 @@ pub fn initializeAllTargetMCs() void {
     _ = target.LLVMInitializeAllTargetMCs();
 }
 
+pub const MemBuff = struct {
+    ref: types.LLVMMemoryBufferRef,
+
+    pub fn fromFile(path: [:0]const u8) MemBuff {
+        var membuff: types.LLVMMemoryBufferRef = undefined;
+        core.LLVMCreateMemoryBufferWithContentsOfFile(path, &membuff, null);
+        return .toZig(membuff);
+    }
+
+    pub fn fromSlice(data: []const u8, name: [:0]const u8) MemBuff {
+        const membuff: types.LLVMMemoryBufferRef = core.LLVMCreateMemoryBufferWithMemoryRange(@ptrCast(data.ptr), data.len, name, 0);
+        return .toZig(membuff);
+    }
+
+    pub fn dispose(buff: MemBuff) void {
+        core.LLVMDisposeMemoryBuffer(buff.toC());
+    }
+
+    pub fn toZig(ref: types.LLVMMemoryBufferRef) MemBuff {
+        return .{ .ref = ref };
+    }
+
+    pub fn toC(t: MemBuff) types.LLVMMemoryBufferRef {
+        return t.ref;
+    }
+};
+
 pub const Module = struct {
     ref: types.LLVMModuleRef,
+
+    pub fn getContext(module: Module) Context {
+        return .toZig(core.LLVMGetModuleContext(module.toC()));
+    }
 
     pub fn create(name: [*:0]const u8) Module {
         return .toZig(core.LLVMModuleCreateWithName(name));
@@ -49,6 +104,12 @@ pub const Module = struct {
 
     pub fn dump(module: Module) void {
         core.LLVMDumpModule(module.ref);
+    }
+
+    pub fn link(dest: Module, src: Module) Error!void {
+        if (linker.LLVMLinkModules2(dest.toC(), src.toC()) != 0) {
+            return Error.linkError;
+        }
     }
 
     pub fn printToFile(module: Module, path: [*:0]const u8) void {
@@ -169,6 +230,10 @@ pub const BasicBlock = struct {
 
 pub const Type = struct {
     ref: types.LLVMTypeRef,
+
+    pub fn Void() Type {
+        return .toZig(core.LLVMVoidType());
+    }
 
     pub fn Int8() Type {
         return .toZig(core.LLVMInt8Type());
@@ -494,30 +559,6 @@ pub const PassManager = struct {
     }
 };
 
-pub const Context = struct {
-    ref: llvm.types.LLVMContextRef,
-
-    pub fn toZig(ref: types.LLVMContextRef) Context {
-        return .{ .ref = ref };
-    }
-
-    pub fn toC(t: Context) types.LLVMContextRef {
-        return t.ref;
-    }
-
-    pub fn create() Context {
-        return .toZig(core.LLVMContextCreate());
-    }
-
-    pub fn global() Context {
-        return .toZig(core.LLVMGetGlobalContext());
-    }
-
-    pub fn dispose(c: Context) void {
-        core.LLVMContextDispose(c.toC());
-    }
-};
-
 pub const OrcLLJitBuilder = struct {
     ref: llvm.types.LLVMOrcLLJITBuilderRef,
 
@@ -575,10 +616,10 @@ pub const ExecutionEngine = struct {
         return t.ref;
     }
 
-    pub fn createForModule(mod: Module) ExecutionEngine {
+    pub fn createForModule(mod: Module) Error!ExecutionEngine {
         var ref: llvm.types.LLVMExecutionEngineRef = undefined;
-        if (engine.LLVMCreateExecutionEngineForModule(&ref, mod.toC(), null) == 1) {
-            @panic("error");
+        if (engine.LLVMCreateExecutionEngineForModule(&ref, mod.toC(), null) != 0) {
+            return Error.CouldNotCreateExecutionEngine;
         }
         return .toZig(ref);
     }
@@ -593,5 +634,29 @@ pub const ExecutionEngine = struct {
 
     pub fn runFunctionAsMain(exec: ExecutionEngine, fun: Function, argc: c_uint, argv: [][:0]const u8) c_int {
         return engine.LLVMRunFunctionAsMain(exec.toC(), fun.toC(), argc, @ptrCast(argv), null);
+    }
+};
+
+pub const Context = struct {
+    ref: llvm.types.LLVMContextRef,
+
+    pub fn toZig(ref: types.LLVMContextRef) Context {
+        return .{ .ref = ref };
+    }
+
+    pub fn toC(t: Context) types.LLVMContextRef {
+        return t.ref;
+    }
+
+    pub fn create() Context {
+        return .toZig(core.LLVMContextCreate());
+    }
+
+    pub fn global() Context {
+        return .toZig(core.LLVMGetGlobalContext());
+    }
+
+    pub fn dispose(c: Context) void {
+        core.LLVMContextDispose(c.toC());
     }
 };

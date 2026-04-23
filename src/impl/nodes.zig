@@ -32,6 +32,8 @@ const section = SyntaxTreeNode{
 const phrase = SyntaxTreeNode{
     .groups = &.{
         &.{
+            .next(expr_dire),
+            .next(expr_attendre),
             .next(expr_calculer),
             .next(expr_afficher_message),
             .next(expr_afficher_valeur),
@@ -51,6 +53,23 @@ const expr_calculer = SyntaxTreeNode{
     .groups = &.{
         &.{.init(expression)},
     },
+};
+
+const expr_attendre = SyntaxTreeNode{
+    .match = fns.eql("attendre [int]"),
+    .build = Context.buildSleep,
+    .groups = &.{
+        &.{
+            .init(.{
+                .match = fns.eql("secondes"),
+            }),
+        },
+    },
+};
+
+const expr_dire = SyntaxTreeNode{
+    .match = fns.eql("dire [str]"),
+    .build = Context.buildTTSMessage,
 };
 
 const expr_afficher_message = SyntaxTreeNode{

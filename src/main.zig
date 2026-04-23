@@ -99,9 +99,20 @@ pub fn main() !void {
     const source = try readFile(&const_buffer, input_path);
     const module = try compile(gpa, progressNode, source);
 
+    std.log.info("compilation success", .{});
+
     if (run) {
-        const exec = llvm.ExecutionEngine.createForModule(module);
+        std.log.info("linking espeak", .{});
+        try llvm.loadLibraryPermanently("libespeak-ng.so");
+
+        const file = @embedFile("test-espeak.ll");
+
+        const espeak_bds = try llvm.parseIrInContext(module.getContext(), .fromSlice(file, "test-espeak.ll"));
+        try module.link(espeak_bds);
+        std.log.info("creating execution engine", .{});
+        const exec = try llvm.ExecutionEngine.createForModule(module);
         const main_fn = exec.findFunction("main");
+        std.log.info("running...", .{});
         _ = exec.runFunctionAsMain(main_fn, 0, &.{});
     } else {
         if (output_path_opt == null) {

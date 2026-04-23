@@ -108,6 +108,15 @@ fn debugPrint(comptime fmt: []const u8, args: anytype) void {
     if (DEBUG_CTX) std.debug.print(fmt, args);
 }
 
+pub fn buildTTSMessage(ctx: *Context, tokens: [][]const u8) !void {
+    const message = tokens[1];
+    const message_nt = ctx.gpa.dupeZ(u8, message[1 .. message.len - 1]) catch @panic("OOM");
+    defer ctx.gpa.free(message_nt);
+    const str = ctx.builder.ir.globalStringPtr(message_nt, "message");
+    ctx.builder.ttsString(str);
+    ctx.opStack.clearResult();
+}
+
 pub fn buildPrintMessage(ctx: *Context, tokens: [][]const u8) !void {
     const message = tokens[3];
     const message_nt = ctx.gpa.dupeZ(u8, message[1 .. message.len - 1]) catch @panic("OOM");
@@ -150,6 +159,13 @@ pub fn buildConstPush(ctx: *Context, tokens: [][]const u8) !void {
     const value = llvm.Value.constDouble(value_int);
     std.debug.print("pushing const {}\n", .{value_int});
     ctx.opStack.pushVal(ctx.gpa, value);
+}
+
+pub fn buildSleep(ctx: *Context, tokens: [][]const u8) !void {
+    const value_str = tokens[1];
+    const value_int = std.fmt.parseInt(u32, value_str, 10) catch @panic("invalid");
+    const value = llvm.Value.constInt32(value_int);
+    ctx.builder.sleep(value);
 }
 
 pub fn buildResultPush(ctx: *Context, _: [][]const u8) !void {

@@ -48,6 +48,8 @@ printfFn: llvm.Function,
 sqrtFn: llvm.Function,
 cbrtFn: llvm.Function,
 powFn: llvm.Function,
+sayFn: llvm.Function,
+sleepFn: llvm.Function,
 
 fmtS: llvm.Value,
 fmtD: llvm.Value,
@@ -59,6 +61,8 @@ pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
     const sqrtFn = module.addFn("llvm.sqrt.f64", .create(llvm.Type.Double(), &.{llvm.Type.Double()}, false));
     const cbrtFn = module.addFn("llvm.cbrt.f64", .create(llvm.Type.Double(), &.{llvm.Type.Double()}, false));
     const powFn = module.addFn("llvm.pow.f64", .create(llvm.Type.Double(), &.{llvm.Type.Double()}, false));
+    const sayFn = module.addFn("say", .create(llvm.Type.Void(), &.{llvm.Type.Int8().Ptr()}, false));
+    const sleepFn = module.addFn("sleep", .create(llvm.Type.Void(), &.{llvm.Type.Int32()}, false));
 
     const fmt_d = llvm.Value.constString("%.2f\n", false);
     const fmt_d_val = module.addGlobal(fmt_d.getType(), "fmt_d").setInitializer(fmt_d).setGlobalConstant(true).setLinkage(.LLVMInternalLinkage).setUnnamedAddr(true);
@@ -80,6 +84,8 @@ pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
         .fmtD = fmt_d_val,
         .fmtS = fmt_s_val,
         .fns = fns,
+        .sayFn = sayFn,
+        .sleepFn = sleepFn,
     };
 }
 
@@ -147,6 +153,14 @@ pub fn squareRoot(b: *Builder, OP: ValueRef) Error!Value {
 
     const value = try OP.getValue(b);
     return b.ir.call(b.sqrtFn, &.{value}, "");
+}
+
+pub fn ttsString(b: *Builder, value: Value) void {
+    _ = b.ir.call(b.sayFn, &.{value}, "");
+}
+
+pub fn sleep(b: *Builder, value: Value) void {
+    _ = b.ir.call(b.sleepFn, &.{value}, "");
 }
 
 pub fn printString(b: *Builder, value: Value) void {
