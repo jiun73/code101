@@ -1,0 +1,19 @@
+--- section "hypoténuse" ---
+
+Prérequis:
+x, un nombre réel;
+y, un nombre réel;
+
+Résultat:
+un nombre réel.
+
+calculer la racine carrée de x au carré plus y au carré
+
+--- ---
+
+--- section principale ---
+
+effectuer les étapes de la section "hypoténuse"
+afficher le résultat
+
+--- ---

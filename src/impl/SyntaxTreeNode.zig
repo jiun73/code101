@@ -32,8 +32,7 @@ const DebugInfo = struct {
     }
 };
 
-const After = union(enum) {
-    inherit: void,
+const Action = union(enum) {
     none: void, //Return to previous node
     end: void,
     loop: void, //re-eval node groups
@@ -43,15 +42,15 @@ const After = union(enum) {
 
 pub const Node = struct {
     ptr: *const SyntaxTreeNode = &SyntaxTreeNode{},
-    after: After = .inherit,
-    allowError: bool = false,
+    afterAction: Action = .none,
+    errorAction: Action = .none,
 
     pub fn init(node: SyntaxTreeNode) Node {
         return .{ .ptr = &node };
     }
 
     pub fn buildNext(bld: (*const BuildFn)) Node {
-        return .{ .after = .next, .ptr = &SyntaxTreeNode{ .build = bld } };
+        return .{ .afterAction = .next, .ptr = &SyntaxTreeNode{ .build = bld } };
     }
 
     pub fn build(bld: (*const BuildFn)) Node {
@@ -59,7 +58,11 @@ pub const Node = struct {
     }
 
     pub fn loop(node: SyntaxTreeNode) Node {
-        return .{ .ptr = &node, .after = .loop };
+        return .{ .ptr = &node, .afterAction = .loop };
+    }
+
+    pub fn loopOrError(node: SyntaxTreeNode, errorAction: Action) Node {
+        return .{ .ptr = &node, .afterAction = .loop, .errorAction = errorAction };
     }
 
     pub fn any() Node {
@@ -67,19 +70,19 @@ pub const Node = struct {
     }
 
     pub fn next(node: SyntaxTreeNode) Node {
-        return .{ .ptr = &node, .after = .next };
+        return .{ .ptr = &node, .afterAction = .next };
     }
 
     pub fn prev(node: SyntaxTreeNode) Node {
-        return .{ .ptr = &node, .after = .prev };
+        return .{ .ptr = &node, .afterAction = .prev };
     }
 
     pub fn end() Node {
-        return .{ .after = .end };
+        return .{ .afterAction = .end };
     }
 
-    pub fn initA(node: SyntaxTreeNode, after: After) Node {
-        return .{ .ptr = &node, .after = after };
+    pub fn initA(node: SyntaxTreeNode, after: Action) Node {
+        return .{ .ptr = &node, .afterAction = after };
     }
 };
 
@@ -87,7 +90,6 @@ debug: ?DebugInfo = null,
 groups: []const []const Node = &.{},
 match: []const (*const MatchFn) = &.{},
 build: ?(*const BuildFn) = null, //Called when a node is matched
-after: After = .none,
 
 const DEBUG_MATCH = true;
 fn debugPrint(comptime fmt: []const u8, args: anytype) void {
@@ -97,7 +99,7 @@ fn debugPrint(comptime fmt: []const u8, args: anytype) void {
 fn printstack(loopbackStack: std.ArrayList(StackValue)) void {
     std.debug.print("stack:", .{});
     for (loopbackStack.items) |item| {
-        if (item.ptr.debug) |debug| std.debug.print("[{s}]", .{debug.label}) else std.debug.print("[?]", .{});
+        if (item.ptr.debug) |debug| std.debug.print("[{s}{s}]", .{ debug.label, if (item.allowError) "!" else "" }) else std.debug.print("[?]", .{});
     }
     std.debug.print("\n", .{});
 }
@@ -149,14 +151,9 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
             backtrack: while (true) {
                 _ = stack.pop();
                 const previous = stack.getLast();
-                var after = previous.ptr.groups[previous.group_i][@intCast(previous.node_i)].after;
+                const action = previous.ptr.groups[previous.group_i][@intCast(previous.node_i)].afterAction;
 
-                if (after == .inherit) {
-                    after = previous.ptr.after;
-                }
-
-                switch (after) {
-                    .inherit => unreachable,
+                switch (action) {
                     .end => return,
                     .none => continue :backtrack,
                     .loop => {
@@ -184,7 +181,7 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
                 if (next.ptr.build) |build| try build(ctx, matched_tokens);
                 tokens = tokens[matched_tokens.len..];
                 stack.items[stack.items.len - 1].node_i = @intCast(i);
-                stack.append(gpa, .{ .ptr = next.ptr, .allowError = next.allowError }) catch @panic("OOM");
+                stack.append(gpa, .{ .ptr = next.ptr, .allowError = next.errorAction != .none }) catch @panic("OOM");
                 continue :loop;
             } else |_| continue;
             // else |err| {
@@ -196,7 +193,31 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
         }
 
         if (current.allowError) {
-            _ = stack.pop();
+            backtrack: while (true) {
+                debugPrint("error", .{});
+                _ = stack.pop();
+                const previous = stack.getLast();
+                const action = previous.ptr.groups[previous.group_i][@intCast(previous.node_i)].errorAction;
+
+                switch (action) {
+                    .end => return,
+                    .none => continue :backtrack,
+                    .loop => {
+                        stack.items[stack.items.len - 1].node_i = -1;
+                        continue :loop;
+                    },
+                    .next => {
+                        stack.items[stack.items.len - 1].group_i += 1;
+                        stack.items[stack.items.len - 1].node_i = -1;
+                        continue :loop;
+                    },
+                    .prev => {
+                        stack.items[stack.items.len - 1].group_i -= 1;
+                        stack.items[stack.items.len - 1].node_i = -1;
+                        continue :loop;
+                    },
+                }
+            }
         } else {
             return MatchError.DoesNotMatch;
         }

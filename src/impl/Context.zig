@@ -204,7 +204,10 @@ pub fn buildRet(ctx: *Context, _: [][]const u8) !void {
 
 pub fn endExpression(ctx: *Context, _: [][]const u8) !void {
     try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
-    try ctx.opStack.setResult(&ctx.builder);
+    ctx.opStack.setResult(&ctx.builder) catch |err| switch (err) {
+        OpStack.Error.NoLeftover => {}, //we allow expressions to resolve with no result
+        else => return err,
+    };
     ctx.opStack.clear();
     std.debug.print("expr end\n", .{});
 }

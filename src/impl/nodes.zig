@@ -83,11 +83,11 @@ const expr_afficher_valeur = SyntaxTreeNode{
 };
 
 const expr_declarer = SyntaxTreeNode{
+    .debug = .init("declare"),
     .match = fns.eql("déclarer un nombre entier [var] égal à"),
     .build = Context.buildDeclare,
     .groups = &.{
-        &.{.next(expression)},
-        &.{.build(Context.resolveExpression)},
+        &.{.init(expression)},
     },
 };
 
@@ -206,12 +206,20 @@ pub const op_rem = SyntaxTreeNode{
     },
 };
 
-pub const prerequis = SyntaxTreeNode{
+pub const section_prerequis = SyntaxTreeNode{
     .match = fns.eql("Prérequis :"),
-    .groups = &.{},
+    .groups = &.{
+        &.{
+            .next(section_param),
+        },
+        &.{
+            .loopOrError(section_param, .next),
+            .any(),
+        },
+    },
 };
 
-pub const single_prerequis = SyntaxTreeNode{
+pub const section_param = SyntaxTreeNode{
     .match = fns.eql("-"),
     .groups = &.{
         &.{
@@ -223,9 +231,14 @@ pub const single_prerequis = SyntaxTreeNode{
         &.{
             .next(.{ .match = fns.eql(";") }),
         },
+    },
+};
+
+pub const section_result = SyntaxTreeNode{
+    .match = fns.eql("Résultat :"),
+    .groups = &.{
         &.{
-            .loop(.{ .match = fns.eql("-") }),
-            .init(.{ .match = fns.eql("Résultat :") }),
+            .init(section_param),
         },
     },
 };
