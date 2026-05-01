@@ -19,7 +19,11 @@ const section = SyntaxTreeNode{
     .match = fns.eql("--- section [sectionlbl] ---"),
     .build = Context.buildSection,
     .groups = &.{
-        &.{.next(phrase)},
+        &.{
+            .detour(section_prerequis),
+            .detour(section_result),
+            .next(phrase),
+        },
         &.{
             .init(.{
                 .match = fns.eql("--- ---"),
@@ -207,6 +211,7 @@ pub const op_rem = SyntaxTreeNode{
 };
 
 pub const section_prerequis = SyntaxTreeNode{
+    .debug = .init("param"),
     .match = fns.eql("Prérequis :"),
     .groups = &.{
         &.{
@@ -226,23 +231,34 @@ pub const section_param = SyntaxTreeNode{
             .next(.{ .match = fns.eql("[var] ,") }),
         },
         &.{
+            .next(type_real),
             .next(type_integer),
         },
         &.{
-            .next(.{ .match = fns.eql(";") }),
+            .init(.{ .match = fns.eql(";") }),
         },
     },
 };
 
 pub const section_result = SyntaxTreeNode{
+    .debug = .init("result"),
     .match = fns.eql("Résultat :"),
     .groups = &.{
         &.{
-            .init(section_param),
+            .next(type_real),
+        },
+        &.{
+            .init(.{ .match = fns.eql(".") }),
         },
     },
 };
 
 pub const type_integer = SyntaxTreeNode{
+    .debug = .init("int"),
     .match = fns.eql("un nombre entier"),
+};
+
+pub const type_real = SyntaxTreeNode{
+    .debug = .init("real"),
+    .match = fns.eql("un nombre réel"),
 };

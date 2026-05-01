@@ -3,20 +3,6 @@ const Context = @import("Context.zig");
 
 pub const SyntaxTreeNode = @This();
 
-const LoopType = enum {
-    None,
-    Master,
-    End,
-    Self,
-    After,
-    BranchAfter, //jump to one of after's nodes depending on the index of the matched next
-    Jump,
-    JumpAfter,
-    JumpPrevious,
-    Jump2Previous,
-};
-
-const TokenUsageType = enum { Current, Save, Saved };
 pub const MatchFnRet = MatchError!usize;
 pub const MatchFn = fn ([][]const u8) MatchFnRet;
 pub const BuildFn = fn (builder: *Context, [][]const u8) anyerror!void;
@@ -38,6 +24,7 @@ const Action = union(enum) {
     loop: void, //re-eval node groups
     next: void, //Return and increment next_i
     prev: void, //Return and decrement next_i
+    detour: void, //next match after this one
 };
 
 pub const Node = struct {
@@ -73,6 +60,14 @@ pub const Node = struct {
         return .{ .ptr = &node, .afterAction = .next };
     }
 
+    pub fn detour(node: SyntaxTreeNode) Node {
+        return .{ .ptr = &node, .afterAction = .detour };
+    }
+
+    pub fn nextOrError(node: SyntaxTreeNode, errorAction: Action) Node {
+        return .{ .ptr = &node, .afterAction = .next, .errorAction = errorAction };
+    }
+
     pub fn prev(node: SyntaxTreeNode) Node {
         return .{ .ptr = &node, .afterAction = .prev };
     }
@@ -91,7 +86,7 @@ groups: []const []const Node = &.{},
 match: []const (*const MatchFn) = &.{},
 build: ?(*const BuildFn) = null, //Called when a node is matched
 
-const DEBUG_MATCH = true;
+const DEBUG_MATCH = false;
 fn debugPrint(comptime fmt: []const u8, args: anytype) void {
     if (DEBUG_MATCH) std.debug.print(fmt, args);
 }
@@ -99,9 +94,26 @@ fn debugPrint(comptime fmt: []const u8, args: anytype) void {
 fn printstack(loopbackStack: std.ArrayList(StackValue)) void {
     std.debug.print("stack:", .{});
     for (loopbackStack.items) |item| {
-        if (item.ptr.debug) |debug| std.debug.print("[{s}{s}]", .{ debug.label, if (item.allowError) "!" else "" }) else std.debug.print("[?]", .{});
+        if (item.ptr.debug) |debug| std.debug.print("[{s}{s}{}:{}]", .{ debug.label, if (item.allowError) "!" else "", item.node_i, item.group_i }) else std.debug.print("[?]", .{});
     }
     std.debug.print("\n", .{});
+}
+
+fn tab(loopbackStack: std.ArrayList(StackValue)) void {
+    if (loopbackStack.items.len <= 1) return;
+    const arr = loopbackStack.items[0..(loopbackStack.items.len - 1)];
+    for (arr) |_| {
+        // const node = item.ptr.groups[item.group_i][@intCast(item.node_i)];
+        // switch (node.afterAction) {
+        //     .end => std.debug.print(".", .{}),
+        //     .none => std.debug.print("|", .{}),
+        //     .detour => std.debug.print(";", .{}),
+        //     .loop => std.debug.print("O", .{}),
+        //     .next => std.debug.print("<", .{}),
+        //     .prev => std.debug.print(">", .{}),
+        // }
+        std.debug.print("|\t", .{});
+    }
 }
 
 pub fn isMatch(node: SyntaxTreeNode, tokens: [][]const u8) MatchError![][]const u8 {
@@ -123,6 +135,10 @@ pub fn isMatch(node: SyntaxTreeNode, tokens: [][]const u8) MatchError![][]const 
         result_tokens = result_tokens[consumed..];
     }
 
+    for (tokens[0..total_consumed]) |value| {
+        std.debug.print("{s} ", .{value});
+    }
+
     debugPrint(" => Y\n", .{});
     return tokens[0..total_consumed];
 }
@@ -142,10 +158,15 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
     stack.append(ctx.gpa, .{ .ptr = &start_node }) catch @panic("OOM");
 
     loop: while (true) {
+        //tab(stack);
         const current = stack.getLast();
 
-        if (current.ptr.debug) |debug| std.debug.print("current {s}\n", .{debug.label});
-        printstack(stack);
+        if (current.ptr.debug) |debug| {
+            std.debug.print("\n", .{});
+            tab(stack);
+            std.debug.print("current {s} {}:{}  ", .{ debug.label, current.node_i + 1, current.group_i });
+        }
+        //printstack(stack);
 
         if (current.ptr.groups.len == 0) {
             backtrack: while (true) {
@@ -153,19 +174,30 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
                 const previous = stack.getLast();
                 const action = previous.ptr.groups[previous.group_i][@intCast(previous.node_i)].afterAction;
 
+                //std.debug.print("backtrack {s} (i:{};group:{})\n", .{ if (previous.ptr.debug) |debug| debug.label else "?", previous.node_i, previous.group_i });
+                //tab(stack);
+
                 switch (action) {
                     .end => return,
                     .none => continue :backtrack,
+                    .detour => {
+                        //debugPrint("detour\n", .{});
+                        stack.items[stack.items.len - 1].node_i -= 1;
+                        continue :loop;
+                    },
                     .loop => {
+                        //debugPrint("loop\n", .{});
                         stack.items[stack.items.len - 1].node_i = -1;
                         continue :loop;
                     },
                     .next => {
+                        //debugPrint("next\n", .{});
                         stack.items[stack.items.len - 1].group_i += 1;
                         stack.items[stack.items.len - 1].node_i = -1;
                         continue :loop;
                     },
                     .prev => {
+                        //debugPrint("prev\n", .{});
                         stack.items[stack.items.len - 1].group_i -= 1;
                         stack.items[stack.items.len - 1].node_i = -1;
                         continue :loop;
@@ -194,7 +226,7 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
 
         if (current.allowError) {
             backtrack: while (true) {
-                debugPrint("error", .{});
+                //debugPrint("error", .{});
                 _ = stack.pop();
                 const previous = stack.getLast();
                 const action = previous.ptr.groups[previous.group_i][@intCast(previous.node_i)].errorAction;
@@ -204,6 +236,10 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
                     .none => continue :backtrack,
                     .loop => {
                         stack.items[stack.items.len - 1].node_i = -1;
+                        continue :loop;
+                    },
+                    .detour => {
+                        //stack.items[stack.items.len - 1].node_i += 1;
                         continue :loop;
                     },
                     .next => {
