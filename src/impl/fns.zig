@@ -2,7 +2,7 @@ const std = @import("std");
 const tok = @import("tok.util.zig");
 const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
 
-const DEBUG_EQL = false;
+const DEBUG_EQL = true;
 fn debugPrint(comptime fmt: []const u8, args: anytype) void {
     if (DEBUG_EQL) std.debug.print(fmt, args);
 }

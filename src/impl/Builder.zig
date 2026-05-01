@@ -6,6 +6,37 @@ const Builder = @This();
 pub const Value = llvm.Value;
 pub const Ref = []const u8;
 
+pub const DataType = enum {
+    Int,
+    Real,
+    String,
+    Bool,
+
+    pub fn toLLVM(ty: DataType) llvm.Type {
+        switch (ty) {
+            .Int => return .Int32(),
+            .Real => return .Double(),
+            .String => return llvm.Type.Int8().Ptr(),
+            .Bool => return .Bool(),
+        }
+    }
+};
+pub const Param = struct { name: []const u8, ty: DataType };
+pub const FunctionDefinition = struct {
+    params: std.ArrayList(Param),
+    name: []const u8,
+    returnType: ?DataType = null,
+
+    pub fn init(gpa: std.mem.Allocator, name: []const u8) FunctionDefinition {
+        const params = std.ArrayList(Param).initCapacity(gpa, 8) catch @panic("OOM");
+        return .{ .params = params, .name = name };
+    }
+
+    pub fn deinit(fndef: *FunctionDefinition, gpa: std.mem.Allocator) void {
+        fndef.params.deinit(gpa);
+    }
+};
+
 pub const ValueRef = union(enum) {
     value: Value,
     ref: Ref,
@@ -189,24 +220,48 @@ pub fn declare(b: *Builder, gpa: std.mem.Allocator, var_name: []const u8) Value 
     return ptr;
 }
 
-pub fn mainSection(b: *Builder) !void {
-    //const fnName = tokens[2];
-
+pub fn main(b: *Builder) !void {
     const fun = b.module.addFn("main", .create(llvm.Type.Int32(), &.{ llvm.Type.Int32(), llvm.Type.Int8().Ptr().Ptr() }, false));
-    const entry = fun.appendBasicBlock("entry");
+    const entry = fun.appendBasicBlock("entree");
     b.ir.positionAtEnd(entry);
 }
 
-pub fn section(b: *Builder, gpa: std.mem.Allocator, name: []const u8) !void {
-    //const fnName = tokens[2];
-    const name_nt = gpa.dupeZ(u8, name) catch @panic("OOM");
+pub fn function(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) void {
+    const name_nt = gpa.dupeZ(u8, def.name) catch @panic("OOM");
     defer gpa.free(name_nt);
 
-    const fun = b.module.addFn(name_nt, .create(llvm.Type.Int32(), &.{ llvm.Type.Int32(), llvm.Type.Int8().Ptr().Ptr() }, false));
-    const entry = fun.appendBasicBlock("entry");
+    std.debug.print("param cnt {}\n", .{def.params.items.len});
+
+    const paramsLLVM = gpa.alloc(llvm.Type, def.params.items.len) catch @panic("OOM");
+    defer gpa.free(paramsLLVM);
+
+    for (def.params.items, 0..) |param, i| {
+        paramsLLVM[i] = param.ty.toLLVM();
+    }
+
+    const fun = b.module.addFn(name_nt, .create(if (def.returnType) |rt| rt.toLLVM() else llvm.Type.Void(), paramsLLVM, false));
+    const entry = fun.appendBasicBlock("entree");
     b.ir.positionAtEnd(entry);
-    b.fns.put(name, fun) catch @panic("OOM");
+
+    for (def.params.items, 0..) |param, i| {
+        const val = fun.getParam(i);
+        b.setVar(param.name, val);
+        std.debug.print("param {s}\n", .{param.name});
+    }
+
+    b.fns.put(def.name, fun) catch @panic("");
 }
+
+// pub fn section(b: *Builder, gpa: std.mem.Allocator, name: []const u8) !void {
+//     //const fnName = tokens[2];
+//     const name_nt = gpa.dupeZ(u8, name) catch @panic("OOM");
+//     defer gpa.free(name_nt);
+
+//     const fun = b.module.addFn(name_nt, .create(llvm.Type.Int32(), &.{ llvm.Type.Int32(), llvm.Type.Int8().Ptr().Ptr() }, false));
+//     const entry = fun.appendBasicBlock("entry");
+//     b.ir.positionAtEnd(entry);
+//     b.fns.put(name, fun) catch @panic("OOM");
+// }
 
 pub fn call(b: *Builder, name: []const u8) !void {
     std.debug.print("getting fn {s}\n", .{name});

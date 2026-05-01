@@ -17,11 +17,12 @@ pub const master = SyntaxTreeNode{
 const section = SyntaxTreeNode{
     .debug = .init("section"),
     .match = fns.eql("--- section [sectionlbl] ---"),
-    .build = Context.buildSection,
+    .build = Context.startFunctionDefinition,
     .groups = &.{
         &.{
             .detour(section_prerequis),
             .detour(section_result),
+            .detour(.{ .build = Context.buildFunction }),
             .next(phrase),
         },
         &.{
@@ -228,7 +229,7 @@ pub const section_param = SyntaxTreeNode{
     .match = fns.eql("-"),
     .groups = &.{
         &.{
-            .next(.{ .match = fns.eql("[var] ,") }),
+            .next(.{ .match = fns.eql("[var] ,"), .build = Context.defineFunctionParam }),
         },
         &.{
             .next(type_real),

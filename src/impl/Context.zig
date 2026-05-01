@@ -9,14 +9,17 @@ const Builder = @import("Builder.zig");
 const nodes = @import("nodes.zig");
 
 const Context = @This();
+const FnOrMain = union(enum) { main: void, fun: Builder.FunctionDefinition };
 
 progressNode: std.Progress.Node,
 gpa: std.mem.Allocator,
 counter: u32,
 
+fndef: ?FnOrMain = null,
 source: []const u8,
 opStack: OpStack,
 builder: Builder,
+typeStack: std.ArrayList(Builder.DataType),
 
 pub fn getSliceTo(source: []const u8, char: *const u8) []const u8 {
     const diff = @intFromPtr(char) - @intFromPtr(source.ptr);
@@ -220,10 +223,52 @@ pub fn buildSection(ctx: *Context, tokens: [][]const u8) !void {
     const name = tokens[2];
 
     if (std.mem.eql(u8, name, "principale")) {
-        try ctx.builder.mainSection();
+        try ctx.builder.main();
     } else {
         const str = name[1 .. name.len - 1];
-        try ctx.builder.section(ctx.gpa, str);
+        try ctx.builder.function(ctx.gpa, str);
+    }
+}
+
+pub fn startFunctionDefinition(ctx: *Context, tokens: [][]const u8) !void {
+    const name = tokens[2];
+
+    if (std.mem.eql(u8, name, "principale")) {
+        ctx.fndef = .{ .main = {} };
+    } else {
+        const name_tr = name[1 .. name.len - 1];
+        ctx.fndef = .{ .fun = .init(ctx.gpa, name_tr) };
+
+        // const str = name[1 .. name.len - 1];
+        // try ctx.builder.section(ctx.gpa, str);
+    }
+}
+
+pub fn defineFunctionParam(ctx: *Context, tokens: [][]const u8) !void {
+    const name = tokens[0];
+    const fndef = &(ctx.fndef orelse @panic("Tentative d'ajouter un paramètre de fonction alors que nous ne sommes pas en train de définir une fonction"));
+
+    switch (fndef.*) {
+        FnOrMain.fun => |*fun| {
+            fun.params.append(ctx.gpa, .{ .name = name, .ty = .Real }) catch @panic("OOM");
+            std.debug.print("define '{s}' {}\n", .{ name, fun });
+        },
+        else => unreachable,
+    }
+}
+
+pub const FunctionError = error{ERROR};
+
+pub fn buildFunction(ctx: *Context, _: [][]const u8) !void {
+    const fndef = &(ctx.fndef orelse @panic("Tentative de contruire une fonction sans la définir"));
+
+    switch (fndef.*) {
+        .main => try ctx.builder.main(),
+        .fun => |*fun| {
+            ctx.builder.function(ctx.gpa, fun.*);
+            std.debug.print("build fn '{s}'\n", .{fun.name});
+            fun.deinit(ctx.gpa);
+        },
     }
 }
 

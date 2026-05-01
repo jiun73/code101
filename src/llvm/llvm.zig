@@ -235,6 +235,10 @@ pub const Type = struct {
         return .toZig(core.LLVMVoidType());
     }
 
+    pub fn Bool() Type {
+        return .toZig(core.LLVMIntType(1));
+    }
+
     pub fn Int8() Type {
         return .toZig(core.LLVMInt8Type());
     }

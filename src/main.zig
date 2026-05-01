@@ -116,7 +116,7 @@ pub fn main() !void {
         _ = exec.runFunctionAsMain(main_fn, 0, &.{});
     } else {
         if (output_path_opt == null) {
-            std.log.info("chemin de sortie non spécifié. utilisation de l'entrée par défaut", .{});
+            std.log.info("chemin de sortie non spécifié. utilisation de la sortie par défaut", .{});
         }
         const out_nt = gpa.dupeZ(u8, output_path) catch @panic("OOM");
         module.printToFile(out_nt);
