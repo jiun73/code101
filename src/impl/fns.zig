@@ -1,5 +1,4 @@
 const std = @import("std");
-const tok = @import("tok.util.zig");
 const log = @import("log.zig");
 const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
 
@@ -103,22 +102,45 @@ pub fn sectionLabel(str: []const u8) bool {
     log.print("{s}[sectionLabel]", .{str}, .MatchingVerbose);
     if (str.len < 2) return false;
     if (std.mem.eql(u8, str, "principale")) return true;
-    if (str[0] == '"' and str[str.len - 1] == '"') return true;
+    if (stringValue(str)) return true;
     return false;
 }
 
 pub fn stringValue(str: []const u8) bool {
     log.print("{s}[str]", .{str}, .MatchingVerbose);
-    return (str[0] == '"' and str[str.len - 1] == '"');
+
+    var view = std.unicode.Utf8View.init(str) catch @panic("invalid UTF8");
+    var iter = view.iterator();
+    const count = std.unicode.utf8CountCodepoints(str) catch @panic("invalid UTF8");
+
+    if (count == 0) return false;
+
+    var first: u21 = undefined;
+    var last: u21 = undefined;
+
+    var i: usize = 0;
+    while (iter.nextCodepoint()) |codepoint| {
+        if (i == count - 1) {
+            last = codepoint;
+        }
+
+        if (i == 0) {
+            first = codepoint;
+        }
+
+        i += 1;
+    }
+
+    return (first == '"' and last == '"') or (first == '«' and last == '»');
 }
 
 pub fn variableName(str: []const u8) bool {
-    return (str.len == 1) and !tok.isoneof(str[0], "0123456789");
+    return (str.len == 1) and (std.mem.indexOfScalar(u8, "0123456789", str[0]) == null);
 }
 
 pub fn integerValue(str: []const u8) bool {
     for (str) |c| {
-        if (!tok.isoneof(c, "0123456789")) return false;
+        if (std.mem.indexOfScalar(u8, "0123456789", c) == null) return false;
     }
     return true;
 }

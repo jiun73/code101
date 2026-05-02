@@ -1,31 +1,50 @@
 const std = @import("std");
-const util = @import("tok.util.zig");
+const log = @import("log.zig");
+const uni = @import("unicode.util.zig");
 
 const CharFamilyType = struct {
-    chars: []const u8,
+    codepoints: []const []const u8,
     discard: bool = false,
     allowRepeat: bool = false,
     codeBlock: bool = false,
 };
 
-const charTypes: [10]CharFamilyType = .{
-    .{ .chars = "\n \r", .discard = true, .allowRepeat = true },
-    .{ .chars = "\"\"", .codeBlock = true },
-    .{ .chars = "()", .discard = true, .allowRepeat = true, .codeBlock = true },
-    .{ .chars = "-", .allowRepeat = true },
-    .{ .chars = ":" },
-    .{ .chars = ";" },
-    .{ .chars = "." },
-    .{ .chars = "," },
-    .{ .chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZéà'ÉÀêÊ", .allowRepeat = true },
-    .{ .chars = "0123456789", .allowRepeat = true },
+const charTypes = [_]CharFamilyType{
+    .{ .codepoints = uni.utf8ListComptime("\n \r"), .discard = true, .allowRepeat = true },
+    .{ .codepoints = uni.utf8ListComptime("\"\""), .codeBlock = true },
+    .{ .codepoints = uni.utf8ListComptime("«»"), .codeBlock = true },
+    .{ .codepoints = uni.utf8ListComptime("()"), .discard = true, .allowRepeat = true, .codeBlock = true },
+    .{ .codepoints = uni.utf8ListComptime("-"), .allowRepeat = true },
+    .{ .codepoints = uni.utf8ListComptime(":") },
+    .{ .codepoints = uni.utf8ListComptime(";") },
+    .{ .codepoints = uni.utf8ListComptime(".") },
+    .{ .codepoints = uni.utf8ListComptime(",") },
+    .{ .codepoints = uni.utf8ListComptime("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZéà'ÉÀêÊ"), .allowRepeat = true },
+    .{ .codepoints = uni.utf8ListComptime("0123456789"), .allowRepeat = true },
 };
 
-pub fn getFamily(char: u8) ?*const CharFamilyType {
+pub fn isOneOf(codepoint: []const u8, list: []const []const u8) bool {
+    for (list) |item| {
+        if (std.mem.eql(u8, item, codepoint)) return true;
+    }
+    return false;
+}
+
+pub fn flatten(codepointArr: []const []const u8) []const u8 {
+    var len: usize = 0;
+    for (codepointArr) |c| {
+        len += c.len;
+    }
+    var token: []const u8 = codepointArr[0][0..0];
+    token.len = len;
+    return token;
+}
+
+pub fn getFamily(codepoint: []const u8) ?*const CharFamilyType {
     for (&charTypes) |*charType| {
         if (charType.codeBlock) {
-            if (char == charType.chars[0]) return charType;
-        } else if (util.isoneof(char, charType.chars)) {
+            if (std.mem.eql(u8, codepoint, charType.codepoints[0])) return charType;
+        } else if (isOneOf(codepoint, charType.codepoints)) {
             return charType;
         }
     }
@@ -34,48 +53,49 @@ pub fn getFamily(char: u8) ?*const CharFamilyType {
 
 pub const TokenizerError = error{InvalidChar};
 
-const DEBUG_TOKEN = false;
-fn debugPrint(comptime fmt: []const u8, args: anytype) void {
-    if (DEBUG_TOKEN) std.debug.print(fmt, args);
-}
-
 pub fn tokenize(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8) TokenizerError!std.ArrayList([]const u8) {
     var tokens = std.ArrayList([]const u8).initCapacity(gpa, 128) catch @panic("OOM");
+
+    const codepoints = uni.strToCodepointSliceListAlloc(gpa, source) catch @panic("invalid UTF8");
+    defer gpa.free(codepoints);
 
     const progress = progressNode.start("Tokenize", source.len);
 
     var i: usize = 0;
     var s: usize = 0;
 
-    var cfam: ?*const CharFamilyType = getFamily(source[0]);
+    var cfam: ?*const CharFamilyType = getFamily(codepoints[0]);
 
-    debugPrint("char: {s}\n", .{source[0..1]});
-    debugPrint("char: {any}\n", .{cfam});
+    //log.println("char: {s}", .{codepoints[0..1]}, .Tokenize);
+    log.println("fam: '{any}'", .{cfam}, .Tokenize);
 
-    while (i < source.len) {
-        const c = source[i];
+    while (i < codepoints.len) {
+        const c = codepoints[i];
+
+        log.println("char: '{s}' ", .{c}, .Tokenize);
 
         const fam = getFamily(c);
 
         if (fam == null) {
-            debugPrint("code: {x} {x}\n", .{ c, i });
+            log.println("code: {s} {x}", .{ c, i }, .Tokenize);
             return TokenizerError.InvalidChar;
         }
 
-        if ((cfam == null)) {
+        if (cfam == null) {
             cfam = fam;
             i += 1;
             continue;
         }
 
         if (cfam.?.codeBlock) {
-            while (source[i] != cfam.?.chars[1]) {
+            while (!std.mem.eql(u8, codepoints[i], cfam.?.codepoints[1])) {
                 i += 1;
             }
             if (!cfam.?.discard) {
                 i += 1;
-                const token = source[s..i];
-                debugPrint("[{s}]\n", .{token});
+                const token_codepoints = codepoints[s..i];
+                const token = flatten(token_codepoints);
+                log.println("[{s}]", .{token}, .Tokenize);
                 i -= 1;
                 progress.setCompletedItems(i);
                 tokens.append(gpa, token) catch @panic("OOM");
@@ -88,8 +108,9 @@ pub fn tokenize(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source:
 
         if ((!cfam.?.allowRepeat) or cfam != fam) {
             if (!cfam.?.discard) {
-                const token = source[s..i];
-                debugPrint("[{s}]\n", .{token});
+                const token_codepoints = codepoints[s..i];
+                const token = flatten(token_codepoints);
+                log.println("[{s}]", .{token}, .Tokenize);
                 progress.setCompletedItems(i);
                 tokens.append(gpa, token) catch @panic("OOM");
             }
@@ -101,9 +122,10 @@ pub fn tokenize(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source:
     }
 
     if (!cfam.?.discard) {
-        const token = source[s..i];
-        debugPrint("[{s}]\n", .{token});
+        const token_codepoints = codepoints[s..i];
+        const token = flatten(token_codepoints);
         progress.setCompletedItems(i);
+        log.println("[{s}]", .{token}, .Tokenize);
         tokens.append(gpa, token) catch @panic("OOM");
     }
 

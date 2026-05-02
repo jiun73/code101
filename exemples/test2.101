@@ -1,4 +1,4 @@
---- section "autre" ---
+--- section «autre» ---
 
 afficher le message "bonjour2" .
 
@@ -6,7 +6,7 @@ afficher le message "bonjour2" .
 
 --- section principale ---
 
-effectuer les étapes de la section "autre" et
+effectuer les étapes de la section «autre» et
 afficher le message "bonjour" .
 
 --- ---

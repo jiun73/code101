@@ -6,9 +6,9 @@ var const_buffer: [buffer_size]u8 = [_]u8{undefined} ** buffer_size;
 var add_prefix = true;
 var line_prefix: []const u8 = const_buffer[0..0];
 
-pub const LogTy = enum { Traversal, Matching, MatchingVerbose, Building, Ops };
+pub const LogTy = enum { Traversal, Matching, MatchingVerbose, Building, Ops, Tokenize };
 
-const allowedLogs = [_]LogTy{ .Traversal, .Matching, .Building, .MatchingVerbose };
+const allowedLogs = [_]LogTy{ .Traversal, .Matching, .Building, .MatchingVerbose, .Tokenize };
 
 pub fn isAllowed(comptime ty: LogTy) bool {
     for (allowedLogs) |all| {

@@ -8,6 +8,8 @@ const OpStack = @import("OpStack.zig");
 const Builder = @import("Builder.zig");
 const nodes = @import("nodes.zig");
 const log = @import("log.zig");
+const fns = @import("fns.zig");
+const uni = @import("unicode.util.zig");
 
 const Context = @This();
 const FnOrMain = union(enum) { main: void, fun: Builder.FunctionDefinition };
@@ -208,9 +210,13 @@ pub fn buildRet(ctx: *Context, _: [][]const u8) !void {
         .main => {
             _ = ctx.builder.ir.ret(llvm.Value.constInt32(0));
         },
-        .fun => |_| {
-            const result = try ctx.opStack.getResult();
-            _ = ctx.builder.ir.ret(result);
+        .fun => |fun| {
+            if (fun.returnType == null) {
+                _ = ctx.builder.ir.retvoid();
+            } else {
+                const result = try ctx.opStack.getResult();
+                _ = ctx.builder.ir.ret(result);
+            }
         },
     }
 }
@@ -246,7 +252,7 @@ pub fn startFunctionDefinition(ctx: *Context, tokens: [][]const u8) !void {
     if (std.mem.eql(u8, name, "principale")) {
         ctx.fndef = .{ .main = {} };
     } else {
-        const name_tr = name[1 .. name.len - 1];
+        const name_tr = uni.stripFirstAndLast(name);
         ctx.fndef = .{ .fun = .init(ctx.gpa, name_tr) };
 
         // const str = name[1 .. name.len - 1];
@@ -297,13 +303,13 @@ pub fn buildFunction(ctx: *Context, _: [][]const u8) !void {
 
 pub fn buildCall(ctx: *Context, tokens: [][]const u8) !void {
     const name = tokens[6];
-    const str = name[1 .. name.len - 1];
+    const str = uni.stripFirstAndLast(name);
     const value = try ctx.builder.call(str);
 
     if (value.getType().getKind() != .LLVMVoidTypeKind) {
         log.println("result is not void", .{}, .Building);
         ctx.opStack.result = value;
-    }
+    } else log.println("result is void", .{}, .Building);
 }
 
 pub fn pushType(comptime ty: Builder.DataType) BuildFn {

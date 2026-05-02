@@ -270,7 +270,7 @@ pub fn function(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) vo
 // }
 
 pub fn call(b: *Builder, name: []const u8) !Value {
-    log.println("getting fn {s}", .{name}, .Building);
+    log.println("getting fn '{s}'", .{name}, .Building);
     const fun = b.fns.get(name) orelse @panic("wrong fns");
 
     return b.ir.call(fun, &.{}, "");
