@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = @import("log.zig");
 const llvm = @import("llvm");
 
 const Builder = @This();
@@ -60,10 +61,10 @@ pub const ValueRef = union(enum) {
         }
     }
 
-    pub fn print(vr: ValueRef) void {
+    pub fn print(vr: ValueRef, comptime logty: log.LogTy) void {
         switch (vr) {
-            .ref => |ref| std.debug.print("[{s}]", .{ref}),
-            .value => |val| std.debug.print("[{x}]", .{@intFromPtr(val.ref)}),
+            .ref => |ref| log.print("[{s}]", .{ref}, logty),
+            .value => |val| log.print("[{x}]", .{@intFromPtr(val.ref)}, logty),
         }
     }
 };
@@ -74,6 +75,7 @@ module: llvm.Module,
 ir: llvm.Builder,
 vars: std.StringHashMap(Value),
 fns: std.StringHashMap(llvm.Function),
+fndefs: std.StringHashMap(FunctionDefinition),
 
 printfFn: llvm.Function,
 sqrtFn: llvm.Function,
@@ -103,6 +105,7 @@ pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
 
     const vars = std.StringHashMap(Value).init(gpa);
     const fns = std.StringHashMap(llvm.Function).init(gpa);
+    const fndefs = std.StringHashMap(FunctionDefinition).init(gpa);
 
     return .{
         .printfFn = printfFn,
@@ -115,6 +118,7 @@ pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
         .fmtD = fmt_d_val,
         .fmtS = fmt_s_val,
         .fns = fns,
+        .fndefs = fndefs,
         .sayFn = sayFn,
         .sleepFn = sleepFn,
     };
@@ -123,12 +127,13 @@ pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
 pub fn deinit(b: *Builder) void {
     b.vars.deinit();
     b.fns.deinit();
+    b.fndefs.deinit();
     b.ir.dispose();
 }
 
 pub fn getVar(b: *Builder, var_name: []const u8) Error!Value {
     return b.vars.get(var_name) orelse {
-        std.debug.print("Variable '{s}' not found\n", .{var_name});
+        log.println("Variable '{s}' not found", .{var_name}, .Building);
         return Error.VariableNotDeclared;
     };
 }
@@ -138,49 +143,49 @@ pub fn setVar(b: *Builder, var_name: []const u8, value: Value) void {
 }
 
 pub fn store(b: *Builder, RHS: ValueRef, LHS: Ref) Error!Value {
-    std.debug.print("store\n", .{});
+    log.println("store", .{}, .Building);
     return b.ir.store(try RHS.getValue(b), try b.getVar(LHS));
 }
 
 pub fn rem(b: *Builder, RHS: ValueRef, LHS: ValueRef) Error!Value {
-    std.debug.print("rem\n", .{});
+    log.println("rem", .{}, .Building);
     return b.ir.frem(try LHS.getValue(b), try RHS.getValue(b), "");
 }
 
 pub fn div(b: *Builder, RHS: ValueRef, LHS: ValueRef) Error!Value {
-    std.debug.print("mul\n", .{});
+    log.println("mul", .{}, .Building);
     return b.ir.fdiv(try LHS.getValue(b), try RHS.getValue(b), "");
 }
 
 pub fn mul(b: *Builder, LHS: ValueRef, RHS: ValueRef) Error!Value {
-    std.debug.print("mul\n", .{});
+    log.println("mul", .{}, .Building);
     return b.ir.fmul(try LHS.getValue(b), try RHS.getValue(b), "");
 }
 
 pub fn mulEq(b: *Builder, RHS: ValueRef, LHS: Ref) Error!void {
     const result = b.ir.fmul(try b.getVar(LHS), try RHS.getValue(b), "");
     b.setVar(LHS, result);
-    std.debug.print("mulEq\n", .{});
+    log.println("mulEq", .{}, .Building);
 }
 
 pub fn add(b: *Builder, LHS: ValueRef, RHS: ValueRef) Error!Value {
-    std.debug.print("add\n", .{});
+    log.println("add", .{}, .Building);
     return b.ir.fadd(try LHS.getValue(b), try RHS.getValue(b), "");
 }
 
 pub fn sub(b: *Builder, RHS: ValueRef, LHS: ValueRef) Error!Value {
-    std.debug.print("sub\n", .{});
+    log.println("sub", .{}, .Building);
     return b.ir.fsub(try LHS.getValue(b), try RHS.getValue(b), "");
 }
 
 pub fn square(b: *Builder, OP: ValueRef) Error!Value {
-    std.debug.print("square\n", .{});
+    log.println("square", .{}, .Building);
     const val = try OP.getValue(b);
     return b.ir.fmul(val, val, "");
 }
 
 pub fn squareRoot(b: *Builder, OP: ValueRef) Error!Value {
-    std.debug.print("root\n", .{});
+    log.println("root", .{}, .Building);
 
     const value = try OP.getValue(b);
     return b.ir.call(b.sqrtFn, &.{value}, "");
@@ -213,7 +218,7 @@ pub fn getAndLoadValue(b: *Builder, var_name: []const u8) Error!llvm.Value {
 }
 
 pub fn declare(b: *Builder, gpa: std.mem.Allocator, var_name: []const u8) Value {
-    std.debug.print("declaration\n", .{});
+    log.println("declaration", .{}, .Building);
     const ptr = b.ir.allocaDupeZ(.Double(), var_name, gpa);
     //_ = b.ir.store(value, ptr);
     b.setVar(var_name, ptr);
@@ -230,7 +235,7 @@ pub fn function(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) vo
     const name_nt = gpa.dupeZ(u8, def.name) catch @panic("OOM");
     defer gpa.free(name_nt);
 
-    std.debug.print("param cnt {}\n", .{def.params.items.len});
+    log.println("param cnt {}", .{def.params.items.len}, .Building);
 
     const paramsLLVM = gpa.alloc(llvm.Type, def.params.items.len) catch @panic("OOM");
     defer gpa.free(paramsLLVM);
@@ -246,10 +251,11 @@ pub fn function(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) vo
     for (def.params.items, 0..) |param, i| {
         const val = fun.getParam(i);
         b.setVar(param.name, val);
-        std.debug.print("param {s}\n", .{param.name});
+        log.println("param {s}", .{param.name}, .Building);
     }
 
-    b.fns.put(def.name, fun) catch @panic("");
+    b.fns.put(def.name, fun) catch @panic("OOM");
+    b.fndefs.put(def.name, def) catch @panic("OOM");
 }
 
 // pub fn section(b: *Builder, gpa: std.mem.Allocator, name: []const u8) !void {
@@ -263,9 +269,9 @@ pub fn function(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) vo
 //     b.fns.put(name, fun) catch @panic("OOM");
 // }
 
-pub fn call(b: *Builder, name: []const u8) !void {
-    std.debug.print("getting fn {s}\n", .{name});
+pub fn call(b: *Builder, name: []const u8) !Value {
+    log.println("getting fn {s}", .{name}, .Building);
     const fun = b.fns.get(name) orelse @panic("wrong fns");
 
-    _ = b.ir.call(fun, &.{}, "");
+    return b.ir.call(fun, &.{}, "");
 }

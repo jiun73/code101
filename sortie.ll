@@ -18,19 +18,19 @@ declare void @say(ptr)
 
 declare void @sleep(i32)
 
-define void @"hypot\C3\A9nuse"(double %0, double %1) {
+define double @"hypot\C3\A9nuse"(double %0, double %1) {
 entree:
   %2 = fmul double %1, %1
   %3 = fadd double %2, %0
   %4 = fmul double %3, %3
   %5 = call double @llvm.sqrt.f64(double %4)
-  ret i32 0
+  ret double %5
 }
 
 define i32 @main(i32 %0, ptr %1) {
 entree:
-  call void @"hypot\C3\A9nuse"()
-  %2 = call i8 (ptr, ...) @printf(ptr @fmt_d, double %5)
+  %2 = call double @"hypot\C3\A9nuse"()
+  %3 = call i8 (ptr, ...) @printf(ptr @fmt_d, double 2.000000e+00)
   ret i32 0
 }
 

@@ -231,6 +231,10 @@ pub const BasicBlock = struct {
 pub const Type = struct {
     ref: types.LLVMTypeRef,
 
+    pub fn getKind(t: Type) llvm.types.LLVMTypeKind {
+        return core.LLVMGetTypeKind(t.toC());
+    }
+
     pub fn Void() Type {
         return .toZig(core.LLVMVoidType());
     }

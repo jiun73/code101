@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = @import("log.zig");
 const Builder = @import("Builder.zig");
 
 pub const OpStack = @This();
@@ -53,32 +54,31 @@ pub fn clearResult(self: *OpStack) void {
 
 pub fn clear(self: *OpStack) void {
     self.varStack.clearRetainingCapacity();
-    std.debug.print("stack cleared\n", .{});
+    log.println("stack cleared", .{}, .Ops);
 }
 
 pub fn getResultSafe(self: *OpStack) Error!Builder.Value {
-    if (self.result == null) return Error.NoResult;
-    return self.result.?;
+    return self.result orelse return Error.NoResult;
 }
 
 pub fn getResult(self: *OpStack) Error!Builder.Value {
-    if (self.result == null) return Error.NoResult;
-    const result = self.result;
+    const result = self.result orelse return Error.NoResult;
     self.clear();
     self.clearResult();
-    return result.?;
+    return result;
 }
 
 pub fn printstack(self: *OpStack) void {
-    std.debug.print("\tvars: ", .{});
+    log.print("vars: ", .{}, .Ops);
     for (self.varStack.items) |vr| {
-        vr.print();
+        vr.print(.Ops);
     }
-    std.debug.print("\n\tops:  ", .{});
+    log.ln(.Ops);
+    log.print("ops:  ", .{}, .Ops);
     for (self.opStack.items) |op| {
-        std.debug.print("{}", .{op});
+        log.print("{}", .{op}, .Ops);
     }
-    std.debug.print("\n", .{});
+    log.ln(.Ops);
 }
 
 pub fn setResult(self: *OpStack, b: *Builder) (Error || Builder.Error)!void {
@@ -88,7 +88,7 @@ pub fn setResult(self: *OpStack, b: *Builder) (Error || Builder.Error)!void {
     }
     if (self.varStack.items.len < 1) return Error.NoLeftover;
     self.result = try self.varStack.items[0].getValue(b);
-    std.debug.print("result set", .{});
+    log.print("result set", .{}, .Ops);
 }
 
 pub fn pushVal(self: *OpStack, gpa: std.mem.Allocator, value: Builder.Value) void {
@@ -138,7 +138,7 @@ pub fn doOp(self: *OpStack, gpa: std.mem.Allocator, b: *Builder, op: Op) (Error 
 }
 
 pub fn resolve(self: *OpStack, gpa: std.mem.Allocator, b: *Builder) (Error || Builder.Error)!void {
-    std.debug.print("resolving: \n", .{});
+    log.println("resolving: ", .{}, .Ops);
     self.printstack();
     while (self.opStack.pop()) |op| {
         try self.doOp(gpa, b, op);

@@ -13,7 +13,7 @@ calculer la racine carrée de x au carré plus y au carré.
 
 --- section principale ---
 
-effectuer les étapes de la section "hypoténuse" et
+effectuer les étapes de la section "hypoténuse" avec z égal à 5, x égal à 3 et y égal à 2, puis
 afficher le résultat.
 
 --- ---

@@ -1,4 +1,6 @@
 const std = @import("std");
+const log = @import("log.zig");
+const fns = @import("fns.zig");
 const Context = @import("Context.zig");
 
 pub const SyntaxTreeNode = @This();
@@ -21,88 +23,104 @@ const DebugInfo = struct {
 const Action = union(enum) {
     none: void, //Return to previous node
     end: void,
-    loop: void, //re-eval node groups
-    next: void, //Return and increment next_i
-    prev: void, //Return and decrement next_i
-    detour: void, //next match after this one
+    restart: void, //Restart from first branch
+    loop: void, //Restart current branch
+    next: void, //Go to next branch
+    prev: void, //Go to previous branch
+    detour: void, //Go to next node after this one
 };
 
-pub const Node = struct {
+pub const Branch = struct {
     ptr: *const SyntaxTreeNode = &SyntaxTreeNode{},
+    cancelDeferOffset: bool = false,
     afterAction: Action = .none,
     errorAction: Action = .none,
 
-    pub fn init(node: SyntaxTreeNode) Node {
+    pub fn leaf(node: SyntaxTreeNode) Branch {
         return .{ .ptr = &node };
     }
 
-    pub fn buildNext(bld: (*const BuildFn)) Node {
-        return .{ .afterAction = .next, .ptr = &SyntaxTreeNode{ .build = bld } };
+    pub fn buildDetour(bld: (*const BuildFn)) Branch {
+        return .{ .afterAction = .detour, .ptr = &SyntaxTreeNode{ .buildFn = bld } };
     }
 
-    pub fn build(bld: (*const BuildFn)) Node {
-        return .{ .ptr = &SyntaxTreeNode{ .build = bld } };
+    pub fn buildNext(bld: (*const BuildFn)) Branch {
+        return .{ .afterAction = .next, .ptr = &SyntaxTreeNode{ .buildFn = bld } };
     }
 
-    pub fn loop(node: SyntaxTreeNode) Node {
+    pub fn buildLeaf(bld: (*const BuildFn)) Branch {
+        return .{ .ptr = &SyntaxTreeNode{ .buildFn = bld } };
+    }
+
+    pub fn loop(node: SyntaxTreeNode) Branch {
         return .{ .ptr = &node, .afterAction = .loop };
     }
 
-    pub fn loopOrError(node: SyntaxTreeNode, errorAction: Action) Node {
+    pub fn restart(node: SyntaxTreeNode) Branch {
+        return .{ .ptr = &node, .afterAction = .restart };
+    }
+
+    pub fn loopOrError(node: SyntaxTreeNode, errorAction: Action) Branch {
         return .{ .ptr = &node, .afterAction = .loop, .errorAction = errorAction };
     }
 
-    pub fn any() Node {
+    pub fn leafAny() Branch {
         return .{};
     }
 
-    pub fn next(node: SyntaxTreeNode) Node {
+    pub fn cancelDefer() Branch {
+        return .{ .cancelDeferOffset = true };
+    }
+
+    pub fn next(node: SyntaxTreeNode) Branch {
         return .{ .ptr = &node, .afterAction = .next };
     }
 
-    pub fn detour(node: SyntaxTreeNode) Node {
+    pub fn detour(node: SyntaxTreeNode) Branch {
         return .{ .ptr = &node, .afterAction = .detour };
     }
 
-    pub fn nextOrError(node: SyntaxTreeNode, errorAction: Action) Node {
+    pub fn nextOrError(node: SyntaxTreeNode, errorAction: Action) Branch {
         return .{ .ptr = &node, .afterAction = .next, .errorAction = errorAction };
     }
 
-    pub fn prev(node: SyntaxTreeNode) Node {
+    pub fn prev(node: SyntaxTreeNode) Branch {
         return .{ .ptr = &node, .afterAction = .prev };
     }
 
-    pub fn end() Node {
+    pub fn end() Branch {
         return .{ .afterAction = .end };
     }
 
-    pub fn initA(node: SyntaxTreeNode, after: Action) Node {
+    pub fn initA(node: SyntaxTreeNode, after: Action) Branch {
         return .{ .ptr = &node, .afterAction = after };
     }
 };
 
 debug: ?DebugInfo = null,
-groups: []const []const Node = &.{},
-match: []const (*const MatchFn) = &.{},
-build: ?(*const BuildFn) = null, //Called when a node is matched
+branches: []const []const Branch = &.{},
+matchFns: []const (*const MatchFn) = &.{},
+deferConsume: bool = false, //test for match, but don't consume it right away. instead, set a 'consume offset'
+buildFn: ?(*const BuildFn) = null, //Called when a node is matched
 
-const DEBUG_MATCH = true;
-fn debugPrint(comptime fmt: []const u8, args: anytype) void {
-    if (DEBUG_MATCH) std.debug.print(fmt, args);
+pub fn match(comptime str: []const u8) SyntaxTreeNode {
+    return .{ .matchFns = fns.eql(str) };
 }
 
 fn printstack(loopbackStack: std.ArrayList(StackValue)) void {
     std.debug.print("stack:", .{});
     for (loopbackStack.items) |item| {
-        if (item.ptr.debug) |debug| std.debug.print("[{s}{s}{}:{}]", .{ debug.label, if (item.allowError) "!" else "", item.node_i, item.group_i }) else std.debug.print("[?]", .{});
+        if (item.ptr.debug) |debug| std.debug.print("[{s}{s}{}:{}]", .{ debug.label, if (item.allowError) "!" else "", item.node_i, item.branch_i }) else std.debug.print("[?]", .{});
     }
     std.debug.print("\n", .{});
 }
 
-fn tab(loopbackStack: std.ArrayList(StackValue)) void {
-    if (loopbackStack.items.len <= 1) return;
-    const arr = loopbackStack.items[0..(loopbackStack.items.len - 1)];
-    for (arr) |_| {
+fn tab(stack: []const StackValue, connect: bool) void {
+    log.removePrefix();
+    if (stack.len <= 1) return;
+    const arr = stack[0..(stack.len - 1)];
+
+    for (arr, 0..) |_, i| {
         // const node = item.ptr.groups[item.group_i][@intCast(item.node_i)];
         // switch (node.afterAction) {
         //     .end => std.debug.print(".", .{}),
@@ -112,41 +130,49 @@ fn tab(loopbackStack: std.ArrayList(StackValue)) void {
         //     .next => std.debug.print("<", .{}),
         //     .prev => std.debug.print(">", .{}),
         // }
-        std.debug.print("|\t", .{});
+        if (i == (arr.len - 1) and connect) {
+            log.appendPrefix("├─");
+        } else {
+            log.appendPrefix("│ ");
+        }
+        //std.debug.print("|\t", .{});
     }
 }
 
 pub fn isMatch(node: SyntaxTreeNode, tokens: [][]const u8) MatchError![][]const u8 {
-    if (node.match.len == 0) return &.{};
+    if (node.matchFns.len == 0) return &.{};
     if (node.debug) |debug| {
-        debugPrint("matching '{s}' \n", .{debug.label});
+        log.println("matching '{s}' ", .{debug.label}, .MatchingVerbose);
     }
 
     var result_tokens = tokens;
     var total_consumed: usize = 0;
 
-    for (node.match) |match| {
-        const consumed = match(result_tokens) catch |err| {
-            debugPrint(" => N\n", .{});
+    for (node.matchFns) |matchFn| {
+        const consumed = matchFn(result_tokens) catch |err| {
+            log.println(" => N", .{}, .MatchingVerbose);
             return err;
         };
         total_consumed += consumed;
-        debugPrint("({})", .{consumed});
+        log.print("({})", .{consumed}, .MatchingVerbose);
         result_tokens = result_tokens[consumed..];
     }
 
+    log.print("\"", .{}, .Matching);
     for (tokens[0..total_consumed]) |value| {
-        std.debug.print("{s} ", .{value});
+        log.print("{s} ", .{value}, .Matching);
     }
+    log.print("\"", .{}, .Matching);
 
-    debugPrint(" => Y\n", .{});
+    log.print(" => Y", .{}, .MatchingVerbose);
+    log.ln(.Matching);
     return tokens[0..total_consumed];
 }
 
 const StackValue = struct {
     ptr: *const SyntaxTreeNode,
-    group_i: usize = 0,
-    node_i: isize = -1,
+    branch_i: usize = 0,
+    node_i: usize = std.math.maxInt(usize),
     allowError: bool = false,
 };
 
@@ -157,65 +183,104 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
     defer stack.deinit(gpa);
     stack.append(ctx.gpa, .{ .ptr = &start_node }) catch @panic("OOM");
 
+    var tokenOffset: usize = 0;
+
     loop: while (true) {
-        //tab(stack);
+        tab(stack.items, false);
         const current = stack.getLast();
 
-        if (current.ptr.debug) |debug| {
-            std.debug.print("\n", .{});
-            //tab(stack);
-            std.debug.print("current {s} {}:{}  ", .{ debug.label, current.node_i + 1, current.group_i });
-        }
-        printstack(stack);
-
-        if (current.ptr.groups.len == 0) {
+        if (current.ptr.branches.len == 0) {
+            var first = true;
             backtrack: while (true) {
                 _ = stack.pop();
-                const previous = stack.getLast();
-                const action = previous.ptr.groups[previous.group_i][@intCast(previous.node_i)].afterAction;
+                if (!first) {
+                    tab(stack.items[0..stack.items.len], true);
+                    log.println("┘", .{}, .Traversal);
+                } else {
+                    first = false;
+                }
 
-                std.debug.print("backtrack {s} (i:{};group:{})\n", .{ if (previous.ptr.debug) |debug| debug.label else "?", previous.node_i, previous.group_i });
-                //tab(stack);
+                var previous = &stack.items[stack.items.len - 1];
+                const branch = previous.ptr.branches[previous.branch_i][previous.node_i];
+                const action = branch.afterAction;
+
+                //log.println("backtrack {s} (i:{};group:{})", .{ if (previous.ptr.debug) |debug| debug.label else "?", previous.node_i, previous.group_i }, .Traversal);
+                //tab(stack.items[0..(stack.items.len - 1)], false);
+                tab(stack.items[0..(stack.items.len - 1)], false);
+
+                if (branch.cancelDeferOffset) {
+                    tokenOffset = 0;
+                    log.println("cancelled defer", .{}, .Traversal);
+                }
 
                 switch (action) {
                     .end => return,
-                    .none => continue :backtrack,
+                    .none => {
+                        //tab(stack.items[0..(stack.items.len - 1)], true);
+                        //log.ln(.Traversal);
+                        //log.println("┘", .{}, .Traversal);
+                        continue :backtrack;
+                    },
+                    .restart => {
+                        previous.branch_i = 0;
+                        previous.node_i = std.math.maxInt(usize);
+                        log.println("#", .{}, .Traversal);
+                        continue :loop;
+                    },
                     .detour => {
-                        debugPrint("detour\n", .{});
+                        log.println("║", .{}, .Traversal);
                         //stack.items[stack.items.len - 1].node_i -= 1;
                         continue :loop;
                     },
                     .loop => {
-                        debugPrint("loop\n", .{});
-                        stack.items[stack.items.len - 1].node_i = -1;
+                        log.println("@", .{}, .Traversal);
+                        previous.node_i = std.math.maxInt(usize);
                         continue :loop;
                     },
                     .next => {
-                        debugPrint("next\n", .{});
-                        stack.items[stack.items.len - 1].group_i += 1;
-                        stack.items[stack.items.len - 1].node_i = -1;
+                        previous.branch_i += 1;
+                        previous.node_i = std.math.maxInt(usize);
+                        log.println("{}", .{stack.items[stack.items.len - 1].branch_i}, .Traversal);
                         continue :loop;
                     },
                     .prev => {
-                        debugPrint("prev\n", .{});
-                        stack.items[stack.items.len - 1].group_i -= 1;
-                        stack.items[stack.items.len - 1].node_i = -1;
+                        previous.branch_i -= 1;
+                        previous.node_i = std.math.maxInt(usize);
+                        log.println("{}", .{stack.items[stack.items.len - 1].branch_i}, .Traversal);
                         continue :loop;
                     },
                 }
             }
         }
 
-        const sub = current.ptr.groups[current.group_i][@intCast(current.node_i + 1)..];
+        const ni = (current.node_i +% 1);
+        const sub = current.ptr.branches[current.branch_i][ni..];
 
-        for (sub, @intCast(current.node_i + 1)..) |next, i| {
-            std.debug.print("i:{}", .{i});
-            const result = next.ptr.isMatch(tokens);
+        for (sub, ni..) |next, i| {
+            //log.print("i:{} ", .{i}, .Traversal);
+            const result = next.ptr.isMatch(tokens[tokenOffset..]);
 
             if (result) |matched_tokens| {
-                if (next.ptr.build) |build| try build(ctx, matched_tokens);
-                tokens = tokens[matched_tokens.len..];
-                stack.items[stack.items.len - 1].node_i = @intCast(i);
+                //log.ln(.Traversal);
+                if (next.ptr.buildFn) |build| try build(ctx, matched_tokens);
+
+                if (next.ptr.deferConsume) {
+                    tokenOffset += matched_tokens.len;
+                    log.println("defer {}", .{tokenOffset}, .Traversal);
+                } else {
+                    if (matched_tokens.len > 0) {
+                        tokens = tokens[tokenOffset + matched_tokens.len ..];
+                        if (tokenOffset > 0) log.println("defer end", .{}, .Traversal);
+                        tokenOffset = 0;
+                    }
+                }
+
+                stack.items[stack.items.len - 1].node_i = i;
+                if (next.ptr.branches.len > 0) {
+                    tab(stack.items, true);
+                    log.println("{s}", .{if (next.ptr.debug) |debug| debug.label else "┐"}, .Traversal);
+                }
+
                 stack.append(gpa, .{ .ptr = next.ptr, .allowError = next.errorAction != .none }) catch @panic("OOM");
                 continue :loop;
             } else |_| continue;
@@ -228,36 +293,37 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
         }
 
         if (current.allowError) {
-            backtrack: while (true) {
-                debugPrint("error", .{});
-                _ = stack.pop();
-                const previous = stack.getLast();
-                const action = previous.ptr.groups[previous.group_i][@intCast(previous.node_i)].errorAction;
+            // backtrack: while (true) {
+            //     log.println("error", .{}, .Traversal);
+            //     _ = stack.pop();
+            //     const previous = stack.getLast();
+            //     const action = previous.ptr.branches[previous.group_i][@intCast(previous.node_i)].errorAction;
 
-                switch (action) {
-                    .end => return,
-                    .none => continue :backtrack,
-                    .loop => {
-                        stack.items[stack.items.len - 1].node_i = -1;
-                        continue :loop;
-                    },
-                    .detour => {
-                        //stack.items[stack.items.len - 1].node_i += 1;
-                        continue :loop;
-                    },
-                    .next => {
-                        stack.items[stack.items.len - 1].group_i += 1;
-                        stack.items[stack.items.len - 1].node_i = -1;
-                        continue :loop;
-                    },
-                    .prev => {
-                        stack.items[stack.items.len - 1].group_i -= 1;
-                        stack.items[stack.items.len - 1].node_i = -1;
-                        continue :loop;
-                    },
-                }
-            }
+            //     switch (action) {
+            //         .end => return,
+            //         .none => continue :backtrack,
+            //         .loop => {
+            //             stack.items[stack.items.len - 1].node_i = -1;
+            //             continue :loop;
+            //         },
+            //         .detour => {
+            //             //stack.items[stack.items.len - 1].node_i += 1;
+            //             continue :loop;
+            //         },
+            //         .next => {
+            //             stack.items[stack.items.len - 1].group_i += 1;
+            //             stack.items[stack.items.len - 1].node_i = -1;
+            //             continue :loop;
+            //         },
+            //         .prev => {
+            //             stack.items[stack.items.len - 1].group_i -= 1;
+            //             stack.items[stack.items.len - 1].node_i = -1;
+            //             continue :loop;
+            //         },
+            //     }
+            // }
         } else {
+            ctx.printLineError(@ptrCast(tokens[0].ptr));
             return MatchError.DoesNotMatch;
         }
     }
@@ -400,6 +466,3 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
 //         return SyntaxTreeNode.MatchError.DoesNotMatch;
 //     }
 // }
-
-pub const jump = SyntaxTreeNode{ .loopback = .Jump };
-pub const jumpl = &.{SyntaxTreeNode{ .loopback = .Jump }};

@@ -6,7 +6,7 @@ const llvm = @import("llvm");
 
 pub const master = SyntaxTreeNode{
     .debug = .init("master"),
-    .groups = &.{
+    .branches = &.{
         &.{
             .loop(section),
             .end(),
@@ -16,26 +16,26 @@ pub const master = SyntaxTreeNode{
 
 const section = SyntaxTreeNode{
     .debug = .init("section"),
-    .match = fns.eql("--- section [sectionlbl] ---"),
-    .build = Context.startFunctionDefinition,
-    .groups = &.{
+    .matchFns = fns.eql("--- section [sectionlbl] ---"),
+    .buildFn = Context.startFunctionDefinition,
+    .branches = &.{
         &.{
             .detour(section_prerequis),
             .detour(section_result),
-            .detour(.{ .build = Context.buildFunction }),
+            .detour(.{ .buildFn = Context.buildFunction }),
             .next(phrase),
         },
         &.{
-            .init(.{
-                .match = fns.eql("--- ---"),
-                .build = Context.buildRet,
+            .leaf(.{
+                .matchFns = fns.eql("--- ---"),
+                .buildFn = Context.buildRet,
             }),
         },
     },
 };
 
 const phrase = SyntaxTreeNode{
-    .groups = &.{
+    .branches = &.{
         &.{
             .next(expr_dire),
             .next(expr_attendre),
@@ -47,71 +47,101 @@ const phrase = SyntaxTreeNode{
             .next(expr_effectuer),
         },
         &.{
-            .init(.{ .match = fns.eql(".") }),
-            .prev(.{ .match = fns.eql("et") }),
+            .leaf(.{ .matchFns = fns.eql(".") }),
+            .prev(.{ .matchFns = fns.eql("et") }),
+            .prev(.{ .matchFns = fns.eql(", puis") }),
         },
     },
 };
 
 const expr_calculer = SyntaxTreeNode{
-    .match = fns.eql("calculer"),
-    .groups = &.{
-        &.{.init(expression)},
+    .matchFns = fns.eql("calculer"),
+    .branches = &.{
+        &.{.leaf(expression)},
     },
 };
 
 const expr_attendre = SyntaxTreeNode{
-    .match = fns.eql("attendre [int]"),
-    .build = Context.buildSleep,
-    .groups = &.{
+    .matchFns = fns.eql("attendre [int]"),
+    .buildFn = Context.buildSleep,
+    .branches = &.{
         &.{
-            .init(.{
-                .match = fns.eql("secondes"),
+            .leaf(.{
+                .matchFns = fns.eql("secondes"),
             }),
         },
     },
 };
 
 const expr_dire = SyntaxTreeNode{
-    .match = fns.eql("dire [str]"),
-    .build = Context.buildTTSMessage,
+    .matchFns = fns.eql("dire [str]"),
+    .buildFn = Context.buildTTSMessage,
 };
 
 const expr_afficher_message = SyntaxTreeNode{
-    .match = fns.eql("afficher le message [str]"),
-    .build = Context.buildPrintMessage,
+    .matchFns = fns.eql("afficher le message [str]"),
+    .buildFn = Context.buildPrintMessage,
 };
 
 const expr_afficher_valeur = SyntaxTreeNode{
-    .match = fns.eql("afficher la valeur de [var]"),
-    .build = Context.buildPrintVar,
+    .matchFns = fns.eql("afficher la valeur de [var]"),
+    .buildFn = Context.buildPrintVar,
 };
 
 const expr_declarer = SyntaxTreeNode{
     .debug = .init("declare"),
-    .match = fns.eql("déclarer un nombre entier [var] égal à"),
-    .build = Context.buildDeclare,
-    .groups = &.{
-        &.{.init(expression)},
+    .matchFns = fns.eql("déclarer un nombre entier [var] égal à"),
+    .buildFn = Context.buildDeclare,
+    .branches = &.{
+        &.{.leaf(expression)},
     },
 };
 
 const expr_effectuer = SyntaxTreeNode{
-    .match = fns.eql("effectuer les étapes de la section [str]"),
-    .build = Context.buildCall,
+    .matchFns = fns.eql("effectuer les étapes de la section [str]"),
+    .buildFn = Context.buildCall,
+    .branches = &.{
+        &.{
+            .leaf(
+                .{
+                    .matchFns = fns.eql("avec"),
+                    .branches = &.{
+                        &.{
+                            .next(.match("[var] égal à")),
+                        },
+                        &.{
+                            .next(expression),
+                        },
+                        &.{
+                            .restart(.match(",")),
+                            .next(.match("et")),
+                            .leafAny(),
+                        },
+                        &.{
+                            .next(.match("[var] égal à")),
+                        },
+                        &.{
+                            .leaf(expression),
+                        },
+                    },
+                },
+            ),
+            .leafAny(),
+        },
+    },
 };
 
 const expr_afficher = SyntaxTreeNode{
-    .match = fns.eql("afficher"),
-    .groups = &.{
+    .matchFns = fns.eql("afficher"),
+    .branches = &.{
         &.{.next(expression)},
-        &.{.build(Context.buildPrintResult)},
+        &.{.buildLeaf(Context.buildPrintResult)},
     },
 };
 
 const expression = SyntaxTreeNode{
     .debug = .init("expr"),
-    .groups = &.{
+    .branches = &.{
         &.{
             .loop(op_sqrt),
             .loop(op_rem),
@@ -127,139 +157,150 @@ const expression = SyntaxTreeNode{
             .prev(op_sub),
             .prev(op_div),
             .loop(op_square),
-            .loop(.{
-                .match = fns.eql(","),
-                .build = Context.resolveExpression,
+            .next(.{
+                .deferConsume = true,
+                .matchFns = fns.eql(","),
+                .buildFn = Context.resolveExpression,
             }),
-            .build(Context.endExpression),
+            .buildLeaf(Context.endExpression),
+        },
+        &.{
+            .restart(op_mul),
+            .restart(op_mul2),
+            .restart(op_add),
+            .restart(op_add2),
+            .restart(op_sub),
+            .restart(op_div),
+            .prev(op_square),
+            .buildDetour(Context.endExpression),
+            .cancelDefer(),
         },
     },
 };
 
 const op_mul = SyntaxTreeNode{
-    .match = fns.eql("fois"),
-    .build = Context.pushOpFn(.Mul),
+    .matchFns = fns.eql("fois"),
+    .buildFn = Context.pushOpFn(.Mul),
 };
 
 const op_mul2 = SyntaxTreeNode{
-    .match = fns.eql("multiplié par"),
-    .build = Context.pushOpFn(.Mul),
+    .matchFns = fns.eql("multiplié par"),
+    .buildFn = Context.pushOpFn(.Mul),
 };
 
 const op_div = SyntaxTreeNode{
-    .match = fns.eql("divisé par"),
-    .build = Context.pushOpFn(.Div),
+    .matchFns = fns.eql("divisé par"),
+    .buildFn = Context.pushOpFn(.Div),
 };
 
 const op_add = SyntaxTreeNode{
-    .match = fns.eql("plus"),
-    .build = Context.pushOpFn(.Add),
+    .matchFns = fns.eql("plus"),
+    .buildFn = Context.pushOpFn(.Add),
 };
 
 const op_add2 = SyntaxTreeNode{
-    .match = fns.eql("additionné à"),
-    .build = Context.pushOpFn(.Add),
+    .matchFns = fns.eql("additionné à"),
+    .buildFn = Context.pushOpFn(.Add),
 };
 
 const op_sub = SyntaxTreeNode{
-    .match = fns.eql("moins"),
-    .build = Context.pushOpFn(.Sub),
+    .matchFns = fns.eql("moins"),
+    .buildFn = Context.pushOpFn(.Sub),
 };
 
 const op_square = SyntaxTreeNode{
-    .match = fns.eql("au carré"),
-    .build = Context.pushOpFn(.Square),
+    .matchFns = fns.eql("au carré"),
+    .buildFn = Context.pushOpFn(.Square),
 };
 
 const variableRef = SyntaxTreeNode{
-    .match = fns.eql("[var]"),
-    .build = Context.buildVariablePush,
+    .matchFns = fns.eql("[var]"),
+    .buildFn = Context.buildVariablePush,
 };
 
 const result = SyntaxTreeNode{
-    .match = fns.eql("le résultat"),
-    .build = Context.buildResultPush,
+    .matchFns = fns.eql("le résultat"),
+    .buildFn = Context.buildResultPush,
 };
 
 pub const copyNode = SyntaxTreeNode{
-    .match = fns.eql("lui - même"),
-    .build = Context.buildCopyPush,
+    .matchFns = fns.eql("lui - même"),
+    .buildFn = Context.buildCopyPush,
 };
 
 pub const constIntNode = SyntaxTreeNode{
-    .match = fns.eql("[int]"),
-    .build = Context.buildConstPush,
+    .matchFns = fns.eql("[int]"),
+    .buildFn = Context.buildConstPush,
 };
 
 pub const op_sqrt = SyntaxTreeNode{
-    .match = fns.eql("la racine carrée de"),
-    .build = &Context.pushOpFn(.SquareRoot),
+    .matchFns = fns.eql("la racine carrée de"),
+    .buildFn = &Context.pushOpFn(.SquareRoot),
 };
 
 pub const op_rem = SyntaxTreeNode{
-    .match = fns.eql("le reste de la division de"),
-    .build = &Context.pushOpFn(.Rem),
-    .groups = &.{
+    .matchFns = fns.eql("le reste de la division de"),
+    .buildFn = &Context.pushOpFn(.Rem),
+    .branches = &.{
         &.{
             .next(variableRef),
             .next(constIntNode),
             .next(result),
         },
         &.{
-            .init(.{ .match = fns.eql("par") }),
+            .leaf(.{ .matchFns = fns.eql("par") }),
         },
     },
 };
 
 pub const section_prerequis = SyntaxTreeNode{
     .debug = .init("param"),
-    .match = fns.eql("Prérequis :"),
-    .groups = &.{
+    .matchFns = fns.eql("Prérequis :"),
+    .branches = &.{
         &.{
             .next(section_param),
         },
         &.{
             .loopOrError(section_param, .next),
-            .any(),
+            .leafAny(),
         },
     },
 };
 
 pub const section_param = SyntaxTreeNode{
-    .match = fns.eql("-"),
-    .groups = &.{
+    .matchFns = fns.eql("-"),
+    .branches = &.{
         &.{
-            .next(.{ .match = fns.eql("[var] ,"), .build = Context.defineFunctionParam }),
+            .next(.{ .matchFns = fns.eql("[var] ,"), .buildFn = Context.buildFunctionParam }),
         },
         &.{
             .next(type_real),
             .next(type_integer),
         },
         &.{
-            .init(.{ .match = fns.eql(";") }),
+            .leaf(.{ .matchFns = fns.eql(";") }),
         },
     },
 };
 
 pub const section_result = SyntaxTreeNode{
     .debug = .init("result"),
-    .match = fns.eql("Résultat :"),
-    .groups = &.{
-        &.{
-            .next(type_real),
-        },
-        &.{
-            .init(.{ .match = fns.eql(".") }),
-        },
+    .matchFns = fns.eql("Résultat :"),
+    .branches = &.{
+        &.{.next(type_real)},
+        &.{.next(.{ .matchFns = fns.eql(".") })},
+        &.{.buildLeaf(Context.buildFunctionResult)},
     },
 };
 
 pub const type_integer = SyntaxTreeNode{
     .debug = .init("int"),
-    .match = fns.eql("un nombre entier"),
+    .buildFn = Context.pushType(.Int),
+    .matchFns = fns.eql("un nombre entier"),
 };
 
 pub const type_real = SyntaxTreeNode{
     .debug = .init("real"),
-    .match = fns.eql("un nombre réel"),
+    .buildFn = Context.pushType(.Real),
+    .matchFns = fns.eql("un nombre réel"),
 };

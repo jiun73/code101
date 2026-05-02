@@ -7,9 +7,11 @@ const SyntaxTreeNode = @import("SyntaxTreeNode.zig").SyntaxTreeNode;
 const OpStack = @import("OpStack.zig");
 const Builder = @import("Builder.zig");
 const nodes = @import("nodes.zig");
+const log = @import("log.zig");
 
 const Context = @This();
 const FnOrMain = union(enum) { main: void, fun: Builder.FunctionDefinition };
+const BuildFn = fn (*Context, [][]const u8) anyerror!void;
 
 progressNode: std.Progress.Node,
 gpa: std.mem.Allocator,
@@ -77,6 +79,7 @@ pub fn printLineError(ctx: *Context, char: *const u8) void {
 pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8, module: llvm.Module) Context {
     const opStack = OpStack.init(gpa);
     const builder = Builder.init(gpa, module);
+    const typeStack = std.ArrayList(Builder.DataType).initCapacity(gpa, 4) catch @panic("OOM");
 
     return .{
         .source = source,
@@ -85,6 +88,7 @@ pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []c
         .counter = 0,
         .opStack = opStack,
         .builder = builder,
+        .typeStack = typeStack,
     };
 }
 
@@ -92,23 +96,19 @@ pub fn deinit(ctx: *Context) void {
     ctx.opStack.deinit(ctx.gpa);
     ctx.builder.deinit();
     ctx.progressNode.end();
+    ctx.typeStack.deinit(ctx.gpa);
 }
 
 fn printstack(loopbackStack: std.ArrayList(SyntaxTreeNode)) void {
-    std.debug.print("stack:", .{});
+    log.print("stack:", .{}, .Building);
     for (loopbackStack.items) |item| {
-        std.debug.print("[{?s}]", .{item.debug});
+        log.print("[{?s}]", .{item.debug}, .Building);
     }
-    std.debug.print("\n", .{});
+    log.ln(.Building);
 }
 
 pub fn build(ctx: *Context, gpa: std.mem.Allocator, tokens: [][]const u8) !void {
     return nodes.master.traverse(ctx, gpa, tokens);
-}
-
-const DEBUG_CTX = false;
-fn debugPrint(comptime fmt: []const u8, args: anytype) void {
-    if (DEBUG_CTX) std.debug.print(fmt, args);
 }
 
 pub fn buildTTSMessage(ctx: *Context, tokens: [][]const u8) !void {
@@ -152,7 +152,7 @@ pub fn buildPrintVar(ctx: *Context, tokens: [][]const u8) !void {
 
 pub fn buildVariablePush(ctx: *Context, tokens: [][]const u8) !void {
     const var_name = tokens[0];
-    std.debug.print("pushing var {s}\n", .{var_name});
+    log.println("pushing var {s}", .{var_name}, .Building);
     ctx.opStack.pushRef(ctx.gpa, var_name);
 }
 
@@ -160,7 +160,7 @@ pub fn buildConstPush(ctx: *Context, tokens: [][]const u8) !void {
     const value_str = tokens[0];
     const value_int = std.fmt.parseFloat(f64, value_str) catch @panic("invalid");
     const value = llvm.Value.constDouble(value_int);
-    std.debug.print("pushing const {}\n", .{value_int});
+    log.println("pushing const {}", .{value_int}, .Building);
     ctx.opStack.pushVal(ctx.gpa, value);
 }
 
@@ -172,7 +172,7 @@ pub fn buildSleep(ctx: *Context, tokens: [][]const u8) !void {
 }
 
 pub fn buildResultPush(ctx: *Context, _: [][]const u8) !void {
-    ctx.opStack.pushVal(ctx.gpa, ctx.opStack.result.?);
+    ctx.opStack.pushVal(ctx.gpa, try ctx.opStack.getResultSafe());
 }
 
 pub fn buildCopyPush(ctx: *Context, _: [][]const u8) !void {
@@ -192,7 +192,7 @@ pub fn buildDeclare(ctx: *Context, tokens: [][]const u8) !void {
 //     } else @panic("result is null");
 // }
 
-pub fn pushOpFn(comptime op: OpStack.Op) fn (*Context, [][]const u8) anyerror!void {
+pub fn pushOpFn(comptime op: OpStack.Op) BuildFn {
     const T = struct {
         pub fn fun(ctx: *Context, _: [][]const u8) !void {
             ctx.opStack.pushOp(ctx.gpa, op);
@@ -202,7 +202,17 @@ pub fn pushOpFn(comptime op: OpStack.Op) fn (*Context, [][]const u8) anyerror!vo
 }
 
 pub fn buildRet(ctx: *Context, _: [][]const u8) !void {
-    _ = ctx.builder.ir.ret(llvm.Value.constInt32(0));
+    const fndef = &(ctx.fndef orelse @panic("TODO"));
+
+    switch (fndef.*) {
+        .main => {
+            _ = ctx.builder.ir.ret(llvm.Value.constInt32(0));
+        },
+        .fun => |_| {
+            const result = try ctx.opStack.getResult();
+            _ = ctx.builder.ir.ret(result);
+        },
+    }
 }
 
 pub fn endExpression(ctx: *Context, _: [][]const u8) !void {
@@ -212,7 +222,7 @@ pub fn endExpression(ctx: *Context, _: [][]const u8) !void {
         else => return err,
     };
     ctx.opStack.clear();
-    std.debug.print("expr end\n", .{});
+    log.println("expr end", .{}, .Building);
 }
 
 pub fn resolveExpression(ctx: *Context, _: [][]const u8) !void {
@@ -244,14 +254,27 @@ pub fn startFunctionDefinition(ctx: *Context, tokens: [][]const u8) !void {
     }
 }
 
-pub fn defineFunctionParam(ctx: *Context, tokens: [][]const u8) !void {
+pub fn buildFunctionParam(ctx: *Context, tokens: [][]const u8) !void {
     const name = tokens[0];
     const fndef = &(ctx.fndef orelse @panic("Tentative d'ajouter un paramètre de fonction alors que nous ne sommes pas en train de définir une fonction"));
 
     switch (fndef.*) {
         FnOrMain.fun => |*fun| {
             fun.params.append(ctx.gpa, .{ .name = name, .ty = .Real }) catch @panic("OOM");
-            std.debug.print("define '{s}' {}\n", .{ name, fun });
+            log.println("function param '{s}'", .{name}, .Building);
+        },
+        else => unreachable,
+    }
+}
+
+pub fn buildFunctionResult(ctx: *Context, _: [][]const u8) !void {
+    const fndef = &(ctx.fndef orelse @panic("Tentative d'ajouter un paramètre de fonction alors que nous ne sommes pas en train de définir une fonction"));
+
+    switch (fndef.*) {
+        .fun => |*fun| {
+            const ty = ctx.typeStack.pop() orelse @panic("TODO");
+            fun.returnType = ty;
+            log.println("function return '{}'", .{ty}, .Building);
         },
         else => unreachable,
     }
@@ -266,7 +289,7 @@ pub fn buildFunction(ctx: *Context, _: [][]const u8) !void {
         .main => try ctx.builder.main(),
         .fun => |*fun| {
             ctx.builder.function(ctx.gpa, fun.*);
-            std.debug.print("build fn '{s}'\n", .{fun.name});
+            log.println("build function '{s}'", .{fun.name}, .Building);
             fun.deinit(ctx.gpa);
         },
     }
@@ -275,5 +298,19 @@ pub fn buildFunction(ctx: *Context, _: [][]const u8) !void {
 pub fn buildCall(ctx: *Context, tokens: [][]const u8) !void {
     const name = tokens[6];
     const str = name[1 .. name.len - 1];
-    try ctx.builder.call(str);
+    const value = try ctx.builder.call(str);
+
+    if (value.getType().getKind() != .LLVMVoidTypeKind) {
+        log.println("result is not void", .{}, .Building);
+        ctx.opStack.result = value;
+    }
+}
+
+pub fn pushType(comptime ty: Builder.DataType) BuildFn {
+    const T = struct {
+        pub fn fun(ctx: *Context, _: [][]const u8) !void {
+            try ctx.typeStack.append(ctx.gpa, ty);
+        }
+    };
+    return T.fun;
 }

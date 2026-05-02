@@ -1,18 +1,14 @@
 const std = @import("std");
 const tok = @import("tok.util.zig");
+const log = @import("log.zig");
 const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
-
-const DEBUG_EQL = true;
-fn debugPrint(comptime fmt: []const u8, args: anytype) void {
-    if (DEBUG_EQL) std.debug.print(fmt, args);
-}
 
 pub fn matchConstTokens(comptime const_tokens: []const []const u8) SyntaxTreeNode.MatchFn {
     const Ret = struct {
         fn f(tokens: [][]const u8) SyntaxTreeNode.MatchFnRet {
             if (tokens.len < const_tokens.len) return SyntaxTreeNode.MatchError.OutOfTokens;
             for (const_tokens, 0..) |const_token, i| {
-                debugPrint("{s}[{s}] ", .{ tokens[i], const_token });
+                log.print("{s}[{s}] ", .{ tokens[i], const_token }, .MatchingVerbose);
                 if (!std.mem.eql(u8, const_token, tokens[i])) return SyntaxTreeNode.MatchError.DoesNotMatch;
             }
 
@@ -104,7 +100,7 @@ pub fn eql(comptime fmt: []const u8) []const (*const SyntaxTreeNode.MatchFn) {
 }
 
 pub fn sectionLabel(str: []const u8) bool {
-    debugPrint("{s}[sectionLabel]", .{str});
+    log.print("{s}[sectionLabel]", .{str}, .MatchingVerbose);
     if (str.len < 2) return false;
     if (std.mem.eql(u8, str, "principale")) return true;
     if (str[0] == '"' and str[str.len - 1] == '"') return true;
@@ -112,7 +108,7 @@ pub fn sectionLabel(str: []const u8) bool {
 }
 
 pub fn stringValue(str: []const u8) bool {
-    debugPrint("{s}[str]", .{str});
+    log.print("{s}[str]", .{str}, .MatchingVerbose);
     return (str[0] == '"' and str[str.len - 1] == '"');
 }
 
