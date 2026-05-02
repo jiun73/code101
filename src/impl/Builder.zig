@@ -24,17 +24,28 @@ pub const DataType = enum {
 };
 pub const Param = struct { name: []const u8, ty: DataType };
 pub const FunctionDefinition = struct {
-    params: std.ArrayList(Param),
-    name: []const u8,
+    params: []Param,
     returnType: ?DataType = null,
+    name: []const u8,
 
-    pub fn init(gpa: std.mem.Allocator, name: []const u8) FunctionDefinition {
-        const params = std.ArrayList(Param).initCapacity(gpa, 8) catch @panic("OOM");
-        return .{ .params = params, .name = name };
+    pub fn findParamIndex(def: FunctionDefinition, name: []const u8) ?usize {
+        for (def.params, 0..) |param, i| {
+            if (std.mem.eql(u8, param.name, name)) return i;
+        }
+        return null;
     }
 
-    pub fn deinit(fndef: *FunctionDefinition, gpa: std.mem.Allocator) void {
-        fndef.params.deinit(gpa);
+    pub fn dupe(gpa: std.mem.Allocator, def: FunctionDefinition) FunctionDefinition {
+        const params_dupe = gpa.dupe(Param, def.params) catch @panic("OOM");
+        return .{
+            .name = def.name,
+            .params = params_dupe,
+            .returnType = def.returnType,
+        };
+    }
+
+    pub fn dealloc(def: FunctionDefinition, gpa: std.mem.Allocator) void {
+        gpa.free(def.params);
     }
 };
 
@@ -124,9 +135,13 @@ pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
     };
 }
 
-pub fn deinit(b: *Builder) void {
+pub fn deinit(b: *Builder, gpa: std.mem.Allocator) void {
     b.vars.deinit();
     b.fns.deinit();
+    var iter = b.fndefs.iterator();
+    while (iter.next()) |def| {
+        def.value_ptr.dealloc(gpa);
+    }
     b.fndefs.deinit();
     b.ir.dispose();
 }
@@ -235,12 +250,12 @@ pub fn function(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) vo
     const name_nt = gpa.dupeZ(u8, def.name) catch @panic("OOM");
     defer gpa.free(name_nt);
 
-    log.println("param cnt {}", .{def.params.items.len}, .Building);
+    log.println("param cnt {}", .{def.params.len}, .Building);
 
-    const paramsLLVM = gpa.alloc(llvm.Type, def.params.items.len) catch @panic("OOM");
+    const paramsLLVM = gpa.alloc(llvm.Type, def.params.len) catch @panic("OOM");
     defer gpa.free(paramsLLVM);
 
-    for (def.params.items, 0..) |param, i| {
+    for (def.params, 0..) |param, i| {
         paramsLLVM[i] = param.ty.toLLVM();
     }
 
@@ -248,14 +263,14 @@ pub fn function(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) vo
     const entry = fun.appendBasicBlock("entree");
     b.ir.positionAtEnd(entry);
 
-    for (def.params.items, 0..) |param, i| {
+    for (def.params, 0..) |param, i| {
         const val = fun.getParam(i);
         b.setVar(param.name, val);
         log.println("param {s}", .{param.name}, .Building);
     }
 
     b.fns.put(def.name, fun) catch @panic("OOM");
-    b.fndefs.put(def.name, def) catch @panic("OOM");
+    b.fndefs.put(def.name, FunctionDefinition.dupe(gpa, def)) catch @panic("OOM");
 }
 
 // pub fn section(b: *Builder, gpa: std.mem.Allocator, name: []const u8) !void {
@@ -269,9 +284,9 @@ pub fn function(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) vo
 //     b.fns.put(name, fun) catch @panic("OOM");
 // }
 
-pub fn call(b: *Builder, name: []const u8) !Value {
+pub fn call(b: *Builder, name: []const u8, args: []Value) !Value {
     log.println("getting fn '{s}'", .{name}, .Building);
     const fun = b.fns.get(name) orelse @panic("wrong fns");
 
-    return b.ir.call(fun, &.{}, "");
+    return b.ir.call(fun, args, "");
 }

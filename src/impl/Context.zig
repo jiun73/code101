@@ -15,15 +15,69 @@ const Context = @This();
 const FnOrMain = union(enum) { main: void, fun: Builder.FunctionDefinition };
 const BuildFn = fn (*Context, [][]const u8) anyerror!void;
 
+const CallCollector = struct {
+    params: []Builder.Value,
+    name: []const u8,
+    paramCursor: ?usize = null,
+    fndef: Builder.FunctionDefinition,
+
+    pub fn start(gpa: std.mem.Allocator, name: []const u8, fndef: Builder.FunctionDefinition) CallCollector {
+        const params = gpa.alloc(Builder.Value, fndef.params.len) catch @panic("OOM");
+        return .{ .name = name, .params = params, .fndef = fndef };
+    }
+
+    pub fn deinit(cc: CallCollector, gpa: std.mem.Allocator) void {
+        gpa.free(cc.params);
+    }
+};
+
+const FunctionDefinitionCollectorTy = struct {
+    name: []const u8,
+    params: std.ArrayList(Builder.Param),
+    returnType: ?Builder.DataType = null,
+
+    pub fn toBuilderDef(def: FunctionDefinitionCollectorTy) Builder.FunctionDefinition {
+        return .{
+            .name = def.name,
+            .params = def.params.items,
+            .returnType = def.returnType,
+        };
+    }
+};
+const FunctionDefinitionCollector = union(enum) {
+    main: void,
+    fun: FunctionDefinitionCollectorTy,
+
+    pub fn startMain() FunctionDefinitionCollector {
+        return .main;
+    }
+
+    pub fn start(gpa: std.mem.Allocator, name: []const u8) FunctionDefinitionCollector {
+        const params = std.ArrayList(Builder.Param).initCapacity(gpa, 8) catch @panic("OOM");
+
+        return .{ .fun = .{ .name = name, .params = params } };
+    }
+
+    pub fn deinit(fndef: *FunctionDefinitionCollector, gpa: std.mem.Allocator) void {
+        switch (fndef.*) {
+            .fun => |*fun| {
+                fun.params.deinit(gpa);
+            },
+            else => {},
+        }
+    }
+};
+
 progressNode: std.Progress.Node,
 gpa: std.mem.Allocator,
 counter: u32,
 
-fndef: ?FnOrMain = null,
 source: []const u8,
 opStack: OpStack,
 builder: Builder,
 typeStack: std.ArrayList(Builder.DataType),
+fndef: ?FunctionDefinitionCollector = null,
+callCollector: ?CallCollector = null,
 
 pub fn getSliceTo(source: []const u8, char: *const u8) []const u8 {
     const diff = @intFromPtr(char) - @intFromPtr(source.ptr);
@@ -96,7 +150,7 @@ pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []c
 
 pub fn deinit(ctx: *Context) void {
     ctx.opStack.deinit(ctx.gpa);
-    ctx.builder.deinit();
+    ctx.builder.deinit(ctx.gpa);
     ctx.progressNode.end();
     ctx.typeStack.deinit(ctx.gpa);
 }
@@ -203,6 +257,15 @@ pub fn pushOpFn(comptime op: OpStack.Op) BuildFn {
     return T.fun;
 }
 
+pub fn doOpFn(comptime op: OpStack.Op) BuildFn {
+    const T = struct {
+        pub fn fun(ctx: *Context, _: [][]const u8) !void {
+            try ctx.opStack.doOp(ctx.gpa, &ctx.builder, op);
+        }
+    };
+    return T.fun;
+}
+
 pub fn buildRet(ctx: *Context, _: [][]const u8) !void {
     const fndef = &(ctx.fndef orelse @panic("TODO"));
 
@@ -210,7 +273,7 @@ pub fn buildRet(ctx: *Context, _: [][]const u8) !void {
         .main => {
             _ = ctx.builder.ir.ret(llvm.Value.constInt32(0));
         },
-        .fun => |fun| {
+        .fun => |*fun| {
             if (fun.returnType == null) {
                 _ = ctx.builder.ir.retvoid();
             } else {
@@ -219,6 +282,9 @@ pub fn buildRet(ctx: *Context, _: [][]const u8) !void {
             }
         },
     }
+
+    fndef.deinit(ctx.gpa);
+    ctx.fndef = null;
 }
 
 pub fn endExpression(ctx: *Context, _: [][]const u8) !void {
@@ -250,10 +316,10 @@ pub fn startFunctionDefinition(ctx: *Context, tokens: [][]const u8) !void {
     const name = tokens[2];
 
     if (std.mem.eql(u8, name, "principale")) {
-        ctx.fndef = .{ .main = {} };
+        ctx.fndef = .startMain();
     } else {
         const name_tr = uni.stripFirstAndLast(name);
-        ctx.fndef = .{ .fun = .init(ctx.gpa, name_tr) };
+        ctx.fndef = .start(ctx.gpa, name_tr);
 
         // const str = name[1 .. name.len - 1];
         // try ctx.builder.section(ctx.gpa, str);
@@ -265,7 +331,7 @@ pub fn buildFunctionParam(ctx: *Context, tokens: [][]const u8) !void {
     const fndef = &(ctx.fndef orelse @panic("Tentative d'ajouter un paramètre de fonction alors que nous ne sommes pas en train de définir une fonction"));
 
     switch (fndef.*) {
-        FnOrMain.fun => |*fun| {
+        .fun => |*fun| {
             fun.params.append(ctx.gpa, .{ .name = name, .ty = .Real }) catch @panic("OOM");
             log.println("function param '{s}'", .{name}, .Building);
         },
@@ -294,22 +360,55 @@ pub fn buildFunction(ctx: *Context, _: [][]const u8) !void {
     switch (fndef.*) {
         .main => try ctx.builder.main(),
         .fun => |*fun| {
-            ctx.builder.function(ctx.gpa, fun.*);
+            ctx.builder.function(ctx.gpa, fun.toBuilderDef());
             log.println("build function '{s}'", .{fun.name}, .Building);
-            fun.deinit(ctx.gpa);
         },
     }
 }
 
-pub fn buildCall(ctx: *Context, tokens: [][]const u8) !void {
-    const name = tokens[6];
-    const str = uni.stripFirstAndLast(name);
-    const value = try ctx.builder.call(str);
+pub fn buildCall(ctx: *Context, _: [][]const u8) !void {
+    var callCollector = &(ctx.callCollector orelse @panic("call collector not initialized"));
+    const name = callCollector.name;
+    const value = try ctx.builder.call(name, callCollector.params);
 
     if (value.getType().getKind() != .LLVMVoidTypeKind) {
         log.println("result is not void", .{}, .Building);
         ctx.opStack.result = value;
     } else log.println("result is void", .{}, .Building);
+
+    callCollector.deinit(ctx.gpa);
+    ctx.callCollector = null;
+}
+
+pub fn startBuildCall(ctx: *Context, tokens: [][]const u8) !void {
+    const name = tokens[6];
+    const str = uni.stripFirstAndLast(name);
+
+    const fun = ctx.builder.fndefs.get(str) orelse @panic("TODO");
+
+    ctx.callCollector = .start(ctx.gpa, str, fun);
+
+    // const value = try ctx.builder.call(str);
+
+    // if (value.getType().getKind() != .LLVMVoidTypeKind) {
+    //     log.println("result is not void", .{}, .Building);
+    //     ctx.opStack.result = value;
+    // } else log.println("result is void", .{}, .Building);
+}
+
+pub fn buildCallParams(ctx: *Context, tokens: []const []const u8) !void {
+    const name = tokens[0];
+    var callCollector = &(ctx.callCollector orelse @panic("call collector not initialized"));
+    const index = callCollector.fndef.findParamIndex(name) orelse @panic("param not found");
+    callCollector.paramCursor = index;
+    log.println("setting arg {}", .{index}, .Building);
+}
+
+pub fn buildCallParamValue(ctx: *Context, _: []const []const u8) !void {
+    const callCollector = ctx.callCollector orelse @panic("call collector not initialized");
+    const index = callCollector.paramCursor orelse @panic("cursor not set");
+    callCollector.params[index] = try ctx.opStack.getResult();
+    log.println("setting value {}", .{index}, .Building);
 }
 
 pub fn pushType(comptime ty: Builder.DataType) BuildFn {

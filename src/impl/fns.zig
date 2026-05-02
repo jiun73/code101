@@ -5,13 +5,13 @@ const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
 pub fn matchConstTokens(comptime const_tokens: []const []const u8) SyntaxTreeNode.MatchFn {
     const Ret = struct {
         fn f(tokens: [][]const u8) SyntaxTreeNode.MatchFnRet {
-            if (tokens.len < const_tokens.len) return SyntaxTreeNode.MatchError.OutOfTokens;
+            if (tokens.len < const_tokens.len) return .{ .false = .outOfTokens };
             for (const_tokens, 0..) |const_token, i| {
                 log.print("{s}[{s}] ", .{ tokens[i], const_token }, .MatchingVerbose);
-                if (!std.mem.eql(u8, const_token, tokens[i])) return SyntaxTreeNode.MatchError.DoesNotMatch;
+                if (!std.mem.eql(u8, const_token, tokens[i])) return .{ .false = .{ .indexDoesNotMatch = i } };
             }
 
-            return const_tokens.len;
+            return .{ .true = .{ .consume = const_tokens.len } };
         }
     };
 
@@ -148,16 +148,21 @@ pub fn integerValue(str: []const u8) bool {
 pub fn single(comptime strf: fn ([]const u8) bool) SyntaxTreeNode.MatchFn {
     const Ret = struct {
         pub fn f(tokens: []const []const u8) SyntaxTreeNode.MatchFnRet {
-            if (tokens.len == 0) return SyntaxTreeNode.MatchError.OutOfTokens;
+            if (tokens.len == 0) return .{ .false = .outOfTokens };
             const token = tokens[0];
 
             if (strf(token)) {
-                return 1;
+                return .{ .true = .{ .consume = 1 } };
             } else {
-                return SyntaxTreeNode.MatchError.DoesNotMatch;
+                return .{ .false = .doesNotMatch };
             }
         }
     };
 
     return Ret.f;
+}
+
+pub fn matchEnd(tokens: []const []const u8) SyntaxTreeNode.MatchFnRet {
+    if (tokens.len == 0) return .{ .true = .match };
+    return .{ .false = .doesNotMatch };
 }

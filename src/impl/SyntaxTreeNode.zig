@@ -5,11 +5,14 @@ const Context = @import("Context.zig");
 
 pub const SyntaxTreeNode = @This();
 
-pub const MatchFnRet = MatchError!usize;
+pub const MatchTrue = union(enum) { match: void, consume: usize };
+pub const MatchFalse = union(enum) { doesNotMatch: void, indexDoesNotMatch: usize, outOfTokens: void };
+pub const Match = union(enum) { true: MatchTrue, false: MatchFalse };
+pub const MatchFnRet = Match;
 pub const MatchFn = fn ([][]const u8) MatchFnRet;
 pub const BuildFn = fn (builder: *Context, [][]const u8) anyerror!void;
 pub const MatchError = error{ OutOfTokens, DoesNotMatch };
-const TraversalError = error{ NoLbNextNode, InvalidStackPop };
+const TraversalError = error{InvalidToken};
 
 const DebugInfo = struct {
     label: [:0]const u8,
@@ -34,7 +37,6 @@ pub const Branch = struct {
     ptr: *const SyntaxTreeNode = &SyntaxTreeNode{},
     cancelDeferOffset: bool = false,
     afterAction: Action = .none,
-    errorAction: Action = .none,
 
     pub fn leaf(node: SyntaxTreeNode) Branch {
         return .{ .ptr = &node };
@@ -60,11 +62,7 @@ pub const Branch = struct {
         return .{ .ptr = &node, .afterAction = .restart };
     }
 
-    pub fn loopOrError(node: SyntaxTreeNode, errorAction: Action) Branch {
-        return .{ .ptr = &node, .afterAction = .loop, .errorAction = errorAction };
-    }
-
-    pub fn leafAny() Branch {
+    pub fn exit() Branch {
         return .{};
     }
 
@@ -78,10 +76,6 @@ pub const Branch = struct {
 
     pub fn detour(node: SyntaxTreeNode) Branch {
         return .{ .ptr = &node, .afterAction = .detour };
-    }
-
-    pub fn nextOrError(node: SyntaxTreeNode, errorAction: Action) Branch {
-        return .{ .ptr = &node, .afterAction = .next, .errorAction = errorAction };
     }
 
     pub fn prev(node: SyntaxTreeNode) Branch {
@@ -107,7 +101,7 @@ pub fn match(comptime str: []const u8) SyntaxTreeNode {
     return .{ .matchFns = fns.eql(str) };
 }
 
-fn printstack(loopbackStack: std.ArrayList(StackValue)) void {
+fn printstack(loopbackStack: std.ArrayList(StackRef)) void {
     std.debug.print("stack:", .{});
     for (loopbackStack.items) |item| {
         if (item.ptr.debug) |debug| std.debug.print("[{s}{s}{}:{}]", .{ debug.label, if (item.allowError) "!" else "", item.node_i, item.branch_i }) else std.debug.print("[?]", .{});
@@ -115,7 +109,7 @@ fn printstack(loopbackStack: std.ArrayList(StackValue)) void {
     std.debug.print("\n", .{});
 }
 
-fn tab(stack: []const StackValue, connect: bool) void {
+fn tab(stack: []const StackRef, connect: bool) void {
     log.removePrefix();
     if (stack.len <= 1) return;
     const arr = stack[0..(stack.len - 1)];
@@ -139,8 +133,8 @@ fn tab(stack: []const StackValue, connect: bool) void {
     }
 }
 
-pub fn isMatch(node: SyntaxTreeNode, tokens: [][]const u8) MatchError![][]const u8 {
-    if (node.matchFns.len == 0) return &.{};
+pub fn isMatch(node: SyntaxTreeNode, tokens: [][]const u8) MatchFnRet {
+    //if (node.matchFns.len == 0) return .{ .true = .match };
     if (node.debug) |debug| {
         log.println("matching '{s}' ", .{debug.label}, .MatchingVerbose);
     }
@@ -149,13 +143,20 @@ pub fn isMatch(node: SyntaxTreeNode, tokens: [][]const u8) MatchError![][]const 
     var total_consumed: usize = 0;
 
     for (node.matchFns) |matchFn| {
-        const consumed = matchFn(result_tokens) catch |err| {
-            log.println(" => N", .{}, .MatchingVerbose);
-            return err;
-        };
-        total_consumed += consumed;
-        log.print("({})", .{consumed}, .MatchingVerbose);
-        result_tokens = result_tokens[consumed..];
+        switch (matchFn(result_tokens)) {
+            .true => |trueval| switch (trueval) {
+                .consume => |consumed| {
+                    total_consumed += consumed;
+                    log.print("({})", .{consumed}, .MatchingVerbose);
+                    result_tokens = result_tokens[consumed..];
+                },
+                .match => {},
+            },
+            .false => |falseval| {
+                log.println(" => N", .{}, .MatchingVerbose);
+                return .{ .false = falseval };
+            },
+        }
     }
 
     log.print("\"", .{}, .Matching);
@@ -166,20 +167,20 @@ pub fn isMatch(node: SyntaxTreeNode, tokens: [][]const u8) MatchError![][]const 
 
     log.print(" => Y", .{}, .MatchingVerbose);
     log.ln(.Matching);
-    return tokens[0..total_consumed];
+    return .{ .true = .{ .consume = total_consumed } };
+    //tokens[0..total_consumed];
 }
 
-const StackValue = struct {
+const StackRef = struct {
     ptr: *const SyntaxTreeNode,
     branch_i: usize = 0,
     node_i: usize = std.math.maxInt(usize),
-    allowError: bool = false,
 };
 
 pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocator, start_tokens: [][]const u8) !void {
     var tokens = start_tokens;
 
-    var stack = std.ArrayList(StackValue).initCapacity(gpa, 32) catch @panic("OOM");
+    var stack = std.ArrayList(StackRef).initCapacity(gpa, 32) catch @panic("OOM");
     defer stack.deinit(gpa);
     stack.append(ctx.gpa, .{ .ptr = &start_node }) catch @panic("OOM");
 
@@ -260,209 +261,45 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
             //log.print("i:{} ", .{i}, .Traversal);
             const result = next.ptr.isMatch(tokens[tokenOffset..]);
 
-            if (result) |matched_tokens| {
-                //log.ln(.Traversal);
-                if (next.ptr.buildFn) |build| try build(ctx, matched_tokens);
-
-                if (next.ptr.deferConsume) {
-                    tokenOffset += matched_tokens.len;
-                    log.println("defer {}", .{tokenOffset}, .Traversal);
-                } else {
-                    if (matched_tokens.len > 0) {
-                        tokens = tokens[tokenOffset + matched_tokens.len ..];
-                        if (tokenOffset > 0) log.println("defer end", .{}, .Traversal);
-                        tokenOffset = 0;
+            switch (result) {
+                .true => |trueval| {
+                    var consumed_count: usize = 0;
+                    switch (trueval) {
+                        .consume => |consumed| {
+                            consumed_count = consumed;
+                        },
+                        else => {},
                     }
-                }
 
-                stack.items[stack.items.len - 1].node_i = i;
-                if (next.ptr.branches.len > 0) {
-                    tab(stack.items, true);
-                    log.println("{s}", .{if (next.ptr.debug) |debug| debug.label else "┐"}, .Traversal);
-                }
+                    const matched_tokens = tokens[tokenOffset..(tokenOffset + consumed_count)];
 
-                stack.append(gpa, .{ .ptr = next.ptr, .allowError = next.errorAction != .none }) catch @panic("OOM");
-                continue :loop;
-            } else |_| continue;
-            // else |err| {
-            //     if (next.allowError) {
-            //         _ = stack.pop();
-            //         continue :loop;
-            //     } else return err;
-            // }
+                    if (next.ptr.buildFn) |build| try build(ctx, matched_tokens);
+
+                    if (next.ptr.deferConsume) {
+                        tokenOffset += matched_tokens.len;
+                        log.println("defer {}", .{tokenOffset}, .Traversal);
+                    } else {
+                        if (matched_tokens.len > 0) {
+                            tokens = tokens[tokenOffset + consumed_count ..];
+                            if (tokenOffset > 0) log.println("defer end", .{}, .Traversal);
+                            tokenOffset = 0;
+                        }
+                    }
+
+                    stack.items[stack.items.len - 1].node_i = i;
+                    if (next.ptr.branches.len > 0) {
+                        tab(stack.items, true);
+                        log.println("{s}", .{if (next.ptr.debug) |debug| debug.label else "┐"}, .Traversal);
+                    }
+
+                    stack.append(gpa, .{ .ptr = next.ptr }) catch @panic("OOM");
+                    continue :loop;
+                },
+                .false => continue,
+            }
         }
 
-        if (current.allowError) {
-            // backtrack: while (true) {
-            //     log.println("error", .{}, .Traversal);
-            //     _ = stack.pop();
-            //     const previous = stack.getLast();
-            //     const action = previous.ptr.branches[previous.group_i][@intCast(previous.node_i)].errorAction;
-
-            //     switch (action) {
-            //         .end => return,
-            //         .none => continue :backtrack,
-            //         .loop => {
-            //             stack.items[stack.items.len - 1].node_i = -1;
-            //             continue :loop;
-            //         },
-            //         .detour => {
-            //             //stack.items[stack.items.len - 1].node_i += 1;
-            //             continue :loop;
-            //         },
-            //         .next => {
-            //             stack.items[stack.items.len - 1].group_i += 1;
-            //             stack.items[stack.items.len - 1].node_i = -1;
-            //             continue :loop;
-            //         },
-            //         .prev => {
-            //             stack.items[stack.items.len - 1].group_i -= 1;
-            //             stack.items[stack.items.len - 1].node_i = -1;
-            //             continue :loop;
-            //         },
-            //     }
-            // }
-        } else {
-            ctx.printLineError(@ptrCast(tokens[0].ptr));
-            return MatchError.DoesNotMatch;
-        }
+        ctx.printLineError(@ptrCast(start_tokens[0].ptr));
+        return MatchError.DoesNotMatch;
     }
 }
-
-// fn traverseNodes(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocator, start_tokens: [][]const u8) !void {
-//     var tokens = start_tokens;
-//     var currentNode: SyntaxTreeNode = start_node;
-//     var loopbackStack = std.ArrayList(SyntaxTreeNode).initCapacity(gpa, 32) catch @panic("OOM");
-//     defer loopbackStack.deinit(gpa);
-
-//     var savedTokensStack = std.ArrayList([][]const u8).initCapacity(gpa, 32) catch @panic("OOM");
-//     defer savedTokensStack.deinit(gpa);
-
-//     mainloop: while (true) {
-//         ctx.progressNode.setCompletedItems(tokens.len);
-//         if (currentNode.debug != null) {
-//             debugPrint("current node: {s} ({any} tokens)\n", .{ currentNode.debug.?, tokens.len });
-//         }
-
-//         if (tokens.len == 0) {
-//             if (currentNode.loopback == .Master or currentNode.loopback == .End) {
-//                 return;
-//             } else {
-//                 return SyntaxTreeNode.MatchError.OutOfTokens;
-//             }
-//         }
-
-//         try switch (currentNode.loopback) {
-//             .After => {
-//                 debugPrint("after:{?s} - ", .{currentNode.debug});
-//                 var copy = currentNode;
-//                 copy.next = copy.after;
-//                 copy.tokens = .Current;
-//                 copy.debug = .{ .label = copy.debug.?.label_after, .label_after = copy.debug.?.label_after };
-//                 copy.loopback = .None;
-//                 try loopbackStack.append(gpa, copy);
-//                 //printstack(loopbackStack);
-//             },
-//             .JumpAfter => {
-//                 debugPrint("jumpafter:{?s} - ", .{currentNode.debug});
-//                 try loopbackStack.append(gpa, SyntaxTreeNode{
-//                     .next = &.{
-//                         SyntaxTreeNode{
-//                             .loopback = .Jump,
-//                             .build = currentNode.build_after,
-//                         },
-//                     },
-//                 });
-//                 //printstack(loopbackStack);
-//             },
-//             .Self => {
-//                 debugPrint("self:{?s} - ", .{currentNode.debug});
-//                 try loopbackStack.append(gpa, currentNode);
-//                 //printstack(loopbackStack);
-//             },
-//             .Master => loopbackStack.append(gpa, currentNode),
-//             .Jump => {
-//                 const last = loopbackStack.pop() orelse return TraversalError.InvalidStackPop;
-//                 currentNode = last;
-
-//                 if (currentNode.loopback == .After) {
-//                     currentNode.next = currentNode.after;
-//                 }
-//                 debugPrint("jump => [{?s}] - ", .{currentNode.debug});
-//                 //printstack(loopbackStack);
-//                 continue :mainloop;
-//             },
-//             .JumpPrevious => {
-//                 _ = loopbackStack.pop();
-//                 currentNode = loopbackStack.pop() orelse return TraversalError.InvalidStackPop;
-
-//                 debugPrint("popjump => [{?s}] - ", .{currentNode.debug});
-//                 //printstack(loopbackStack);
-//                 continue :mainloop;
-//             },
-//             .Jump2Previous => {
-//                 _ = loopbackStack.pop();
-//                 _ = loopbackStack.pop();
-//                 currentNode = loopbackStack.pop() orelse return TraversalError.InvalidStackPop;
-
-//                 debugPrint("popjump => [{?s}] - ", .{currentNode.debug});
-//                 //printstack(loopbackStack);
-//                 continue :mainloop;
-//             },
-//             .None => {},
-//             .End => {},
-//             .BranchAfter => {},
-//         };
-
-//         for (currentNode.next, 0..) |*next, i| {
-//             const result_err = next.*.isMatch(tokens);
-
-//             if (result_err) |result| {
-//                 if (currentNode.loopback == .BranchAfter) {
-//                     var copy = currentNode;
-//                     copy.next = copy.after[i..];
-//                     copy.tokens = .Current;
-//                     copy.debug = null;
-//                     copy.loopback = .None;
-//                     try loopbackStack.append(gpa, copy);
-//                     debugPrint("branch #{} => [{?s}] - ", .{ i, copy.debug });
-//                     //printstack(loopbackStack);
-//                 }
-//                 const tok_before = tokens;
-//                 tokens = tokens[result.len..];
-//                 currentNode = next.*;
-//                 if (currentNode.build != null) {
-//                     if (currentNode.tokens == .Saved) {
-//                         const toks = savedTokensStack.pop() orelse @panic("out of saved tokens");
-//                         const err = currentNode.build.?(ctx, toks);
-//                         err catch {
-//                             ctx.printLineError(@ptrCast(tok_before[0].ptr));
-//                             return err;
-//                         };
-//                     } else {
-//                         const err = currentNode.build.?(ctx, result);
-//                         err catch {
-//                             ctx.printLineError(@ptrCast(tok_before[0].ptr));
-//                             return err;
-//                         };
-//                     }
-//                 }
-//                 if (currentNode.tokens == .Save) {
-//                     try savedTokensStack.append(gpa, result);
-//                 }
-//                 continue :mainloop;
-//             } else |_| {
-//                 debugPrint("checking next...\n", .{});
-//                 continue;
-//             }
-//         }
-
-//         if (currentNode.debug != null) {
-//             debugPrint("no match found for node {s}. exiting\n", .{currentNode.debug.?});
-//         }
-
-//         ctx.printLineError(@ptrCast(tokens[0].ptr));
-
-//         return SyntaxTreeNode.MatchError.DoesNotMatch;
-//     }
-// }

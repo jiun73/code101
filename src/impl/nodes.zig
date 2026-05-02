@@ -99,34 +99,44 @@ const expr_declarer = SyntaxTreeNode{
 
 const expr_effectuer = SyntaxTreeNode{
     .matchFns = fns.eql("effectuer les étapes de la section [str]"),
-    .buildFn = Context.buildCall,
+    .buildFn = Context.startBuildCall,
     .branches = &.{
         &.{
-            .leaf(
+            .detour(
                 .{
                     .matchFns = fns.eql("avec"),
                     .branches = &.{
                         &.{
-                            .next(.match("[var] égal à")),
+                            .next(.{
+                                .matchFns = fns.eql("[var] égal à"),
+                                .buildFn = Context.buildCallParams,
+                            }),
                         },
                         &.{
                             .next(expression),
                         },
                         &.{
+                            .buildDetour(Context.buildCallParamValue),
                             .restart(.match(",")),
                             .next(.match("et")),
-                            .leafAny(),
+                            .exit(),
                         },
                         &.{
-                            .next(.match("[var] égal à")),
+                            .next(.{
+                                .matchFns = fns.eql("[var] égal à"),
+                                .buildFn = Context.buildCallParams,
+                            }),
                         },
                         &.{
-                            .leaf(expression),
+                            .next(expression),
+                        },
+                        &.{
+                            .buildLeaf(Context.buildCallParamValue),
                         },
                     },
                 },
             ),
-            .leafAny(),
+            .buildLeaf(Context.buildCall),
         },
     },
 };
@@ -210,7 +220,7 @@ const op_sub = SyntaxTreeNode{
 
 const op_square = SyntaxTreeNode{
     .matchFns = fns.eql("au carré"),
-    .buildFn = Context.pushOpFn(.Square),
+    .buildFn = Context.doOpFn(.Square),
 };
 
 const variableRef = SyntaxTreeNode{
@@ -261,8 +271,8 @@ pub const section_prerequis = SyntaxTreeNode{
             .next(section_param),
         },
         &.{
-            .loopOrError(section_param, .next),
-            .leafAny(),
+            .loop(section_param),
+            .exit(),
         },
     },
 };
