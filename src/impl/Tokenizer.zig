@@ -101,7 +101,7 @@ pub fn tokenize(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source:
                 tokens.append(gpa, token) catch @panic("OOM");
             }
             cfam = null;
-            s = i;
+            s = i + 1;
             i += 1;
             continue;
         }
