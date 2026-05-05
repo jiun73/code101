@@ -173,7 +173,6 @@ pub fn buildTTSMessage(ctx: *Context, tokens: [][]const u8) !void {
     defer ctx.gpa.free(message_nt);
     const str = ctx.builder.ir.globalStringPtr(message_nt, "message");
     ctx.builder.ttsString(str);
-    ctx.opStack.clearResult();
 }
 
 pub fn buildPrintMessage(ctx: *Context, tokens: [][]const u8) !void {
@@ -182,34 +181,32 @@ pub fn buildPrintMessage(ctx: *Context, tokens: [][]const u8) !void {
     defer ctx.gpa.free(message_nt);
     const str = ctx.builder.ir.globalStringPtr(message_nt, "message");
     ctx.builder.printString(str);
-    ctx.opStack.clearResult();
 }
 
 pub fn buildMultiplyEq(ctx: *Context, _: [][]const u8) !void {
-    try ctx.builder.mulEq(try ctx.opStack.getVal(), (try ctx.opStack.getVal()).getRef());
-    ctx.opStack.clearResult();
+    try ctx.builder.mulEq(try ctx.opStack.getDouble(), (try ctx.opStack.getDouble()).getRef());
 }
 
 pub fn buildMultiply(ctx: *Context, _: [][]const u8) !void {
-    ctx.opStack.pushOp(ctx.gpa, .Mul);
+    ctx.opStack.pushOp(ctx.gpa, .Multiply);
     try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
 }
 
 pub fn buildPrintResult(ctx: *Context, _: [][]const u8) !void {
-    ctx.builder.printDecimal(try ctx.opStack.getResultSafe());
+    const result = try ctx.opStack.popDouble(&ctx.builder);
+    ctx.builder.printDecimal(result);
 }
 
 pub fn buildPrintVar(ctx: *Context, tokens: [][]const u8) !void {
     const var_name = tokens[4];
     const value = try ctx.builder.getAndLoadValue(var_name);
     ctx.builder.printDecimal(value);
-    ctx.opStack.clearResult();
 }
 
 pub fn buildVariablePush(ctx: *Context, tokens: [][]const u8) !void {
     const var_name = tokens[0];
     log.println("pushing var {s}", .{var_name}, .Building);
-    ctx.opStack.pushRef(ctx.gpa, var_name);
+    ctx.opStack.pushData(ctx.gpa, .{ .reference = var_name });
 }
 
 pub fn buildConstPush(ctx: *Context, tokens: [][]const u8) !void {
@@ -217,7 +214,7 @@ pub fn buildConstPush(ctx: *Context, tokens: [][]const u8) !void {
     const value_int = std.fmt.parseFloat(f64, value_str) catch @panic("invalid");
     const value = llvm.Value.constDouble(value_int);
     log.println("pushing const {}", .{value_int}, .Building);
-    ctx.opStack.pushVal(ctx.gpa, value);
+    ctx.opStack.pushData(ctx.gpa, .{ .double = value });
 }
 
 pub fn buildSleep(ctx: *Context, tokens: [][]const u8) !void {
@@ -227,19 +224,23 @@ pub fn buildSleep(ctx: *Context, tokens: [][]const u8) !void {
     ctx.builder.sleep(value);
 }
 
-pub fn buildResultPush(ctx: *Context, _: [][]const u8) !void {
-    ctx.opStack.pushVal(ctx.gpa, try ctx.opStack.getResultSafe());
+pub fn buildResultPush(_: *Context, _: [][]const u8) !void {
+    //unreachable;
 }
 
 pub fn buildCopyPush(ctx: *Context, _: [][]const u8) !void {
-    ctx.opStack.push(ctx.gpa, ctx.opStack.getLast());
+    ctx.opStack.pushData(ctx.gpa, ctx.opStack.getLast());
 }
 
 pub fn buildDeclare(ctx: *Context, tokens: [][]const u8) !void {
-    const var_name = tokens[4];
-    _ = ctx.builder.declare(ctx.gpa, var_name);
-    ctx.opStack.pushRef(ctx.gpa, var_name);
-    ctx.opStack.pushOp(ctx.gpa, .Store);
+    const variable_name = tokens[4];
+
+    ctx.opStack.pushData(ctx.gpa, .{ .label = variable_name });
+    _ = try ctx.opStack.doOp(ctx.gpa, &ctx.builder, .{ .memory = .Declare });
+
+    ctx.opStack.pushOp(ctx.gpa, .{ .control = .Stop });
+    ctx.opStack.pushData(ctx.gpa, .{ .reference = variable_name });
+    ctx.opStack.pushOp(ctx.gpa, .{ .memory = .Store });
 }
 
 // pub fn pushResultToStack(ctx: *Context) void {
@@ -260,7 +261,7 @@ pub fn pushOpFn(comptime op: OpStack.Op) BuildFn {
 pub fn doOpFn(comptime op: OpStack.Op) BuildFn {
     const T = struct {
         pub fn fun(ctx: *Context, _: [][]const u8) !void {
-            try ctx.opStack.doOp(ctx.gpa, &ctx.builder, op);
+            _ = try ctx.opStack.doOp(ctx.gpa, &ctx.builder, op);
         }
     };
     return T.fun;
@@ -277,7 +278,8 @@ pub fn buildRet(ctx: *Context, _: [][]const u8) !void {
             if (fun.returnType == null) {
                 _ = ctx.builder.ir.retvoid();
             } else {
-                const result = try ctx.opStack.getResult();
+                const result = try ctx.opStack.popValue(&ctx.builder);
+
                 _ = ctx.builder.ir.ret(result);
             }
         },
@@ -287,18 +289,17 @@ pub fn buildRet(ctx: *Context, _: [][]const u8) !void {
     ctx.fndef = null;
 }
 
-pub fn endExpression(ctx: *Context, _: [][]const u8) !void {
-    try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
-    ctx.opStack.setResult(&ctx.builder) catch |err| switch (err) {
-        OpStack.Error.NoLeftover => {}, //we allow expressions to resolve with no result
-        else => return err,
-    };
-    ctx.opStack.clear();
-    log.println("expr end", .{}, .Building);
+pub fn startExpr(ctx: *Context, _: [][]const u8) !void {
+    ctx.opStack.pushOp(ctx.gpa, .{ .control = .Stop });
 }
 
-pub fn resolveExpression(ctx: *Context, _: [][]const u8) !void {
+pub fn endExpr(ctx: *Context, _: [][]const u8) !void {
     try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
+}
+
+pub fn restartExpr(ctx: *Context, _: [][]const u8) !void {
+    try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
+    ctx.opStack.pushOp(ctx.gpa, .{ .control = .Stop });
 }
 
 pub fn buildSection(ctx: *Context, tokens: [][]const u8) !void {
@@ -371,10 +372,11 @@ pub fn buildCall(ctx: *Context, _: [][]const u8) !void {
     const name = callCollector.name;
     const value = try ctx.builder.call(name, callCollector.params);
 
-    if (value.getType().getKind() != .LLVMVoidTypeKind) {
-        log.println("result is not void", .{}, .Building);
-        ctx.opStack.result = value;
-    } else log.println("result is void", .{}, .Building);
+    switch (value.getType().getKind()) {
+        .LLVMVoidTypeKind => {},
+        .LLVMDoubleTypeKind => ctx.opStack.pushData(ctx.gpa, .{ .double = value }),
+        else => unreachable,
+    }
 
     callCollector.deinit(ctx.gpa);
     ctx.callCollector = null;
@@ -407,7 +409,7 @@ pub fn buildCallParams(ctx: *Context, tokens: []const []const u8) !void {
 pub fn buildCallParamValue(ctx: *Context, _: []const []const u8) !void {
     const callCollector = ctx.callCollector orelse @panic("call collector not initialized");
     const index = callCollector.paramCursor orelse @panic("cursor not set");
-    callCollector.params[index] = try ctx.opStack.getResult();
+    callCollector.params[index] = try ctx.opStack.popValue(&ctx.builder);
     log.println("setting value {}", .{index}, .Building);
 }
 

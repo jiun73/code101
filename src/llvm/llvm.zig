@@ -427,6 +427,10 @@ pub const Builder = struct {
         return .toZig(core.LLVMBuildAdd(builder.toC(), LHS.toC(), RHS.toC(), retName));
     }
 
+    pub fn fcmp(builder: Builder, op: types.LLVMRealPredicate, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildFCmp(builder.toC(), op, LHS.toC(), RHS.toC(), retName));
+    }
+
     pub fn fadd(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
         return .toZig(core.LLVMBuildFAdd(builder.toC(), LHS.toC(), RHS.toC(), retName));
     }

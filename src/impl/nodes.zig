@@ -45,6 +45,7 @@ const phrase = SyntaxTreeNode{
             .next(expr_afficher),
             .next(expr_declarer),
             .next(expr_effectuer),
+            .next(expr_eval_cond),
         },
         &.{
             .leaf(.{ .matchFns = fns.eql(".") }),
@@ -88,12 +89,22 @@ const expr_afficher_valeur = SyntaxTreeNode{
     .buildFn = Context.buildPrintVar,
 };
 
+const expr_eval_cond = SyntaxTreeNode{
+    .debug = .init("declare"),
+    .matchFns = fns.eql("évaluer si"),
+    //.buildFn = Context.buildDeclare,
+    .branches = &.{
+        &.{.leaf(conditional)},
+    },
+};
+
 const expr_declarer = SyntaxTreeNode{
     .debug = .init("declare"),
     .matchFns = fns.eql("déclarer un nombre entier [var] égal à"),
     .buildFn = Context.buildDeclare,
     .branches = &.{
-        &.{.leaf(expression)},
+        &.{.next(expression)},
+        &.{.buildLeaf(Context.endExpr)},
     },
 };
 
@@ -151,6 +162,7 @@ const expr_afficher = SyntaxTreeNode{
 
 const expression = SyntaxTreeNode{
     .debug = .init("expr"),
+    .buildFn = Context.startExpr,
     .branches = &.{
         &.{
             .loop(op_sqrt),
@@ -170,9 +182,9 @@ const expression = SyntaxTreeNode{
             .next(.{
                 .deferConsume = true,
                 .matchFns = fns.eql(","),
-                .buildFn = Context.resolveExpression,
+                .buildFn = Context.restartExpr,
             }),
-            .buildLeaf(Context.endExpression),
+            .buildLeaf(Context.endExpr),
         },
         &.{
             .restart(op_mul),
@@ -182,45 +194,99 @@ const expression = SyntaxTreeNode{
             .restart(op_sub),
             .restart(op_div),
             .prev(op_square),
-            .buildDetour(Context.endExpression),
+            .buildDetour(Context.endExpr),
             .cancelDefer(),
+        },
+    },
+};
+
+const conditional = SyntaxTreeNode{
+    .debug = .init("cond"),
+    .branches = &.{
+        &.{
+            .next(expression),
+        },
+        &.{
+            .next(op_gt),
+            .next(op_gte),
+            .next(op_lt),
+            .next(op_lte),
+            .next(op_eq),
+            .next(op_neq),
+        },
+        &.{
+            .next(expression),
+        },
+        &.{
+            .restart(.match("et")),
+            .restart(.match("ou")),
         },
     },
 };
 
 const op_mul = SyntaxTreeNode{
     .matchFns = fns.eql("fois"),
-    .buildFn = Context.pushOpFn(.Mul),
+    .buildFn = Context.pushOpFn(.{ .arithmetic = .{ .binary = .Multiply } }),
 };
 
 const op_mul2 = SyntaxTreeNode{
     .matchFns = fns.eql("multiplié par"),
-    .buildFn = Context.pushOpFn(.Mul),
+    .buildFn = Context.pushOpFn(.{ .arithmetic = .{ .binary = .Multiply } }),
 };
 
 const op_div = SyntaxTreeNode{
     .matchFns = fns.eql("divisé par"),
-    .buildFn = Context.pushOpFn(.Div),
+    .buildFn = Context.pushOpFn(.{ .arithmetic = .{ .binary = .Divide } }),
 };
 
 const op_add = SyntaxTreeNode{
     .matchFns = fns.eql("plus"),
-    .buildFn = Context.pushOpFn(.Add),
+    .buildFn = Context.pushOpFn(.{ .arithmetic = .{ .binary = .Add } }),
 };
 
 const op_add2 = SyntaxTreeNode{
     .matchFns = fns.eql("additionné à"),
-    .buildFn = Context.pushOpFn(.Add),
+    .buildFn = Context.pushOpFn(.{ .arithmetic = .{ .binary = .Add } }),
 };
 
 const op_sub = SyntaxTreeNode{
     .matchFns = fns.eql("moins"),
-    .buildFn = Context.pushOpFn(.Sub),
+    .buildFn = Context.pushOpFn(.{ .arithmetic = .{ .binary = .Substract } }),
 };
 
 const op_square = SyntaxTreeNode{
     .matchFns = fns.eql("au carré"),
-    .buildFn = Context.doOpFn(.Square),
+    .buildFn = Context.doOpFn(.{ .arithmetic = .{ .unary = .Square } }),
+};
+
+const op_gt = SyntaxTreeNode{
+    .matchFns = fns.eql("est plus grand que"),
+    .buildFn = Context.pushOpFn(.{ .comparison = .GreaterThan }),
+};
+
+const op_gte = SyntaxTreeNode{
+    .matchFns = fns.eql("est plus grand ou égal à"),
+    .buildFn = Context.pushOpFn(.{ .comparison = .GreaterThanOrEqualTo }),
+};
+
+const op_lt = SyntaxTreeNode{
+    .matchFns = fns.eql("est plus petit que"),
+    .buildFn = Context.pushOpFn(.{ .comparison = .LessThan }),
+};
+
+const op_lte = SyntaxTreeNode{
+    .matchFns = fns.eql("est plus petit ou égal à"),
+    .buildFn = Context.pushOpFn(.{ .comparison = .LessThanOrEqualTo }),
+};
+
+const op_eq = SyntaxTreeNode{
+    .matchFns = fns.eql("est égal à"),
+    .buildFn = Context.pushOpFn(.{ .comparison = .EqualTo }),
+};
+
+const op_neq = SyntaxTreeNode{
+    .matchFns = fns.eql("n'est pas égal à"),
+    .buildFn = Context.pushOpFn(.{ .comparison = .NotEqualTo }),
 };
 
 const variableRef = SyntaxTreeNode{
@@ -245,12 +311,12 @@ pub const constIntNode = SyntaxTreeNode{
 
 pub const op_sqrt = SyntaxTreeNode{
     .matchFns = fns.eql("la racine carrée de"),
-    .buildFn = &Context.pushOpFn(.SquareRoot),
+    .buildFn = &Context.pushOpFn(.{ .arithmetic = .{ .unary = .SquareRoot } }),
 };
 
 pub const op_rem = SyntaxTreeNode{
     .matchFns = fns.eql("le reste de la division de"),
-    .buildFn = &Context.pushOpFn(.Rem),
+    .buildFn = &Context.pushOpFn(.{ .arithmetic = .{ .binary = .Remainder } }),
     .branches = &.{
         &.{
             .next(variableRef),

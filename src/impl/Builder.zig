@@ -60,11 +60,6 @@ pub const ValueRef = union(enum) {
         }
     }
 
-    pub fn getValueLoad(vr: ValueRef, b: *Builder) Error!Value {
-        const value = vr.getValue(b);
-        return b.ir.load2(.Double(), value, "");
-    }
-
     pub fn getRef(vr: ValueRef) Ref {
         switch (vr) {
             .ref => |ref| return ref,
@@ -157,53 +152,81 @@ pub fn setVar(b: *Builder, var_name: []const u8, value: Value) void {
     b.vars.put(var_name, value) catch @panic("OOM");
 }
 
-pub fn store(b: *Builder, RHS: ValueRef, LHS: Ref) Error!Value {
+pub fn store(b: *Builder, LHS: Ref, RHS: Value) Error!Value {
     log.println("store", .{}, .Building);
-    return b.ir.store(try RHS.getValue(b), try b.getVar(LHS));
+    return b.ir.store(RHS, try b.getVar(LHS));
 }
 
-pub fn rem(b: *Builder, RHS: ValueRef, LHS: ValueRef) Error!Value {
+pub fn rem(b: *Builder, LHS: Value, RHS: Value) Value {
     log.println("rem", .{}, .Building);
-    return b.ir.frem(try LHS.getValue(b), try RHS.getValue(b), "");
+    return b.ir.frem(LHS, RHS, "");
 }
 
-pub fn div(b: *Builder, RHS: ValueRef, LHS: ValueRef) Error!Value {
+pub fn div(b: *Builder, LHS: Value, RHS: Value) Value {
     log.println("mul", .{}, .Building);
-    return b.ir.fdiv(try LHS.getValue(b), try RHS.getValue(b), "");
+    return b.ir.fdiv(LHS, RHS, "");
 }
 
-pub fn mul(b: *Builder, LHS: ValueRef, RHS: ValueRef) Error!Value {
+pub fn mul(b: *Builder, LHS: Value, RHS: Value) Value {
     log.println("mul", .{}, .Building);
-    return b.ir.fmul(try LHS.getValue(b), try RHS.getValue(b), "");
+    return b.ir.fmul(LHS, RHS, "");
 }
 
-pub fn mulEq(b: *Builder, RHS: ValueRef, LHS: Ref) Error!void {
-    const result = b.ir.fmul(try b.getVar(LHS), try RHS.getValue(b), "");
+pub fn mulEq(b: *Builder, LHS: Ref, RHS: Value) Error!void {
+    const v = try b.getVar(LHS);
+    const result = b.ir.fmul(v, try RHS.getValue(b), "");
     b.setVar(LHS, result);
     log.println("mulEq", .{}, .Building);
 }
 
-pub fn add(b: *Builder, LHS: ValueRef, RHS: ValueRef) Error!Value {
+pub fn add(b: *Builder, LHS: Value, RHS: Value) Value {
     log.println("add", .{}, .Building);
-    return b.ir.fadd(try LHS.getValue(b), try RHS.getValue(b), "");
+    return b.ir.fadd(LHS, RHS, "");
 }
 
-pub fn sub(b: *Builder, RHS: ValueRef, LHS: ValueRef) Error!Value {
+pub fn sub(b: *Builder, LHS: Value, RHS: Value) Value {
     log.println("sub", .{}, .Building);
-    return b.ir.fsub(try LHS.getValue(b), try RHS.getValue(b), "");
+    return b.ir.fsub(LHS, RHS, "");
 }
 
-pub fn square(b: *Builder, OP: ValueRef) Error!Value {
+pub fn eq(b: *Builder, LHS: Value, RHS: Value) Value {
+    log.println("sub", .{}, .Building);
+    return b.ir.fcmp(.LLVMRealOEQ, LHS, RHS, "");
+}
+
+pub fn neq(b: *Builder, LHS: Value, RHS: Value) Value {
+    log.println("sub", .{}, .Building);
+    return b.ir.fcmp(.LLVMRealONE, LHS, RHS, "");
+}
+
+pub fn gt(b: *Builder, LHS: Value, RHS: Value) Value {
+    log.println("sub", .{}, .Building);
+    return b.ir.fcmp(.LLVMRealOGT, LHS, RHS, "");
+}
+
+pub fn gte(b: *Builder, LHS: Value, RHS: Value) Value {
+    log.println("sub", .{}, .Building);
+    return b.ir.fcmp(.LLVMRealOGE, LHS, RHS, "");
+}
+
+pub fn lt(b: *Builder, LHS: Value, RHS: Value) Value {
+    log.println("sub", .{}, .Building);
+    return b.ir.fcmp(.LLVMRealOLT, LHS, RHS, "");
+}
+
+pub fn lte(b: *Builder, LHS: Value, RHS: Value) Value {
+    log.println("sub", .{}, .Building);
+    return b.ir.fcmp(.LLVMRealOLE, LHS, RHS, "");
+}
+
+pub fn square(b: *Builder, val: Value) Value {
     log.println("square", .{}, .Building);
-    const val = try OP.getValue(b);
     return b.ir.fmul(val, val, "");
 }
 
-pub fn squareRoot(b: *Builder, OP: ValueRef) Error!Value {
+pub fn squareRoot(b: *Builder, val: Value) Value {
     log.println("root", .{}, .Building);
-
-    const value = try OP.getValue(b);
-    return b.ir.call(b.sqrtFn, &.{value}, "");
+    return b.ir.call(b.sqrtFn, &.{val}, "");
 }
 
 pub fn ttsString(b: *Builder, value: Value) void {
