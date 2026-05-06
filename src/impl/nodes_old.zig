@@ -288,6 +288,12 @@ pub const phraseNode = SyntaxTreeNode{
                     },
                 },
                 .{
+                    .match = fns.eql(", ensuite"),
+                    .next = &.{
+                        SyntaxTreeNode{ .debug = .init("loop"), .loopback = .Jump },
+                    },
+                },
+                .{
                     .match = fns.eql("."),
                     .next = &.{
                         SyntaxTreeNode{ .debug = .init("phrase_end"), .loopback = .JumpPrevious },

@@ -9,7 +9,7 @@ pub const master = SyntaxTreeNode{
     .branches = &.{
         &.{
             .loop(section),
-            .end(),
+            .any(),
         },
     },
 };
@@ -22,8 +22,35 @@ const section = SyntaxTreeNode{
         &.{
             .detour(section_prerequis),
             .detour(section_result),
-            .detour(.{ .buildFn = Context.buildFunction }),
+            .buildDetour(Context.buildFunction),
+            .next(.{}),
+        },
+        &.{
+            .detour(.{
+                .branches = &.{
+                    &.{
+                        .leaf(.match("Tout d'abord ,")),
+                    },
+                },
+            }),
             .next(phrase),
+            .last(),
+            .leaf(.{
+                .matchFns = fns.eql("--- ---"),
+                .buildFn = Context.buildRet,
+            }),
+        },
+        &.{
+            .detour(.{
+                .branches = &.{
+                    &.{
+                        .leaf(.match("Ensuite ,")),
+                        .leaf(.match("Après ,")),
+                    },
+                },
+            }),
+            .loop(phrase),
+            .last(),
         },
         &.{
             .leaf(.{
@@ -48,9 +75,9 @@ const phrase = SyntaxTreeNode{
             .next(expr_eval_cond),
         },
         &.{
-            .leaf(.{ .matchFns = fns.eql(".") }),
             .prev(.{ .matchFns = fns.eql("et") }),
             .prev(.{ .matchFns = fns.eql(", puis") }),
+            .leaf(.{ .matchFns = fns.eql(".") }),
         },
     },
 };

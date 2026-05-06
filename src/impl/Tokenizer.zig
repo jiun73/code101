@@ -19,7 +19,7 @@ const charTypes = [_]CharFamilyType{
     .{ .codepoints = uni.utf8ListComptime(";") },
     .{ .codepoints = uni.utf8ListComptime(".") },
     .{ .codepoints = uni.utf8ListComptime(",") },
-    .{ .codepoints = uni.utf8ListComptime("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZéà'ÉÀêÊ"), .allowRepeat = true },
+    .{ .codepoints = uni.utf8ListComptime("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZéèà'ÉÈÀêÊ"), .allowRepeat = true },
     .{ .codepoints = uni.utf8ListComptime("0123456789"), .allowRepeat = true },
 };
 

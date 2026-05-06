@@ -39,6 +39,7 @@ pub fn main() !void {
     var args = full_args[1..];
 
     std.log.info("code101", .{});
+    std.log.info("LLVM: {}", .{llvm.getVersion()});
 
     var input_path_opt: ?[]const u8 = null;
     var output_path_opt: ?[]const u8 = null;
@@ -105,9 +106,9 @@ pub fn main() !void {
         std.log.info("liaison de la librarie espeak", .{});
         try llvm.loadLibraryPermanently("libespeak-ng.so");
 
-        const file = @embedFile("test-espeak.ll");
+        const file = @embedFile("lib.ll");
 
-        const espeak_bds = try llvm.parseIrInContext(module.getContext(), .fromSlice(file, "test-espeak.ll"));
+        const espeak_bds = try llvm.parseIrInContext(module.getContext(), .fromSlice(file, "lib.ll"));
         try module.link(espeak_bds);
         std.log.info("création de l'engin d'éxécution", .{});
         const exec = try llvm.ExecutionEngine.createForModule(module);

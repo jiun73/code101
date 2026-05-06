@@ -25,18 +25,22 @@ const DebugInfo = struct {
 
 const Action = union(enum) {
     none: void, //Return to previous node
-    end: void,
     restart: void, //Restart from first branch
     loop: void, //Restart current branch
     next: void, //Go to next branch
     prev: void, //Go to previous branch
     detour: void, //Go to next node after this one
+    last: void, //Go to last branch
 };
 
 pub const Branch = struct {
     ptr: *const SyntaxTreeNode = &SyntaxTreeNode{},
     cancelDeferOffset: bool = false,
     afterAction: Action = .none,
+
+    pub fn any() Branch {
+        return .{ .ptr = &SyntaxTreeNode{} };
+    }
 
     pub fn leaf(node: SyntaxTreeNode) Branch {
         return .{ .ptr = &node };
@@ -62,6 +66,10 @@ pub const Branch = struct {
         return .{ .ptr = &node, .afterAction = .restart };
     }
 
+    pub fn last() Branch {
+        return .{ .ptr = &SyntaxTreeNode{}, .afterAction = .last };
+    }
+
     pub fn exit() Branch {
         return .{};
     }
@@ -80,10 +88,6 @@ pub const Branch = struct {
 
     pub fn prev(node: SyntaxTreeNode) Branch {
         return .{ .ptr = &node, .afterAction = .prev };
-    }
-
-    pub fn end() Branch {
-        return .{ .afterAction = .end };
     }
 
     pub fn initA(node: SyntaxTreeNode, after: Action) Branch {
@@ -190,7 +194,7 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
 
     loop: while (true) {
         tab(stack.items, false);
-        const current = stack.getLast();
+        const current = stack.getLastOrNull() orelse return;
 
         if (current.ptr.branches.len == 0) {
             var first = true;
@@ -202,6 +206,8 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
                 } else {
                     first = false;
                 }
+
+                if (stack.items.len == 0) return;
 
                 var previous = &stack.items[stack.items.len - 1];
                 const branch = previous.ptr.branches[previous.branch_i][previous.node_i];
@@ -217,7 +223,6 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
                 }
 
                 switch (action) {
-                    .end => return,
                     .none => {
                         //tab(stack.items[0..(stack.items.len - 1)], true);
                         //log.ln(.Traversal);
@@ -228,6 +233,12 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
                         previous.branch_i = 0;
                         previous.node_i = std.math.maxInt(usize);
                         log.println("#", .{}, .Traversal);
+                        continue :loop;
+                    },
+                    .last => {
+                        previous.branch_i = previous.ptr.branches.len - 1;
+                        previous.node_i = std.math.maxInt(usize);
+                        log.println("*", .{}, .Traversal);
                         continue :loop;
                     },
                     .detour => {

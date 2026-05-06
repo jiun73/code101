@@ -1,0 +1,15 @@
+.{
+    .name = .llvm_zig,
+    .version = "1.0.0",
+    .dependencies = .{},
+    .minimum_zig_version = "0.15.1",
+    .fingerprint = 0xbf48c74bc4247821,
+    .paths = .{
+        "src",
+        "build.zig",
+        "build.zig.zon",
+        "README.md",
+        "LICENSE",
+        "examples",
+    },
+}

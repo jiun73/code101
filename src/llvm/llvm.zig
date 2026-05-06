@@ -22,9 +22,19 @@ pub const Error = error{
     CouldNotCreateExecutionEngine,
 };
 
+pub const Version = struct { major: c_uint, minor: c_uint, patch: c_uint };
+
+pub fn getVersion() Version {
+    var version: Version = undefined;
+    llvm.core.LLVMGetVersion(&version.major, &version.minor, &version.patch);
+    return version;
+}
+
 pub fn parseIrInContext(ctx: Context, buff: MemBuff) Error!Module {
     var mod: types.LLVMModuleRef = undefined;
-    if (irreader.LLVMParseIRInContext(ctx.toC(), buff.toC(), &mod, null) != 0) {
+    var outm: [*c]u8 = undefined;
+    if (irreader.LLVMParseIRInContext(ctx.toC(), buff.toC(), &mod, &outm) != 0) {
+        std.debug.print("{s}", .{std.mem.span(outm)});
         return Error.parseIrInContextError;
     }
     return .toZig(mod);
