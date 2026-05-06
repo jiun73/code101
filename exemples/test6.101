@@ -1,5 +1,8 @@
 --- section principale ---
 
-évaluer si 1 est plus grand que 2 et
-dire "bonjour" .
+déclarer un nombre entier i égal à 3, puis
+afficher la valeur de i, puis
+évaluer si i est plus grand que 2 et
+afficher le résultat.
+
 --- ---

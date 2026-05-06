@@ -92,6 +92,7 @@ sleepFn: llvm.Function,
 
 fmtS: llvm.Value,
 fmtD: llvm.Value,
+fmtB: llvm.Value,
 
 pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
     const builder = llvm.Builder.create();
@@ -102,6 +103,9 @@ pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
     const powFn = module.addFn("llvm.pow.f64", .create(llvm.Type.Double(), &.{llvm.Type.Double()}, false));
     const sayFn = module.addFn("say", .create(llvm.Type.Void(), &.{llvm.Type.Int8().Ptr()}, false));
     const sleepFn = module.addFn("sleep", .create(llvm.Type.Void(), &.{llvm.Type.Int32()}, false));
+
+    const fmt_b = llvm.Value.constString("%d\n", false);
+    const fmt_b_val = module.addGlobal(fmt_b.getType(), "fmt_b").setInitializer(fmt_b).setGlobalConstant(true).setLinkage(.LLVMInternalLinkage).setUnnamedAddr(true);
 
     const fmt_d = llvm.Value.constString("%.2f\n", false);
     const fmt_d_val = module.addGlobal(fmt_d.getType(), "fmt_d").setInitializer(fmt_d).setGlobalConstant(true).setLinkage(.LLVMInternalLinkage).setUnnamedAddr(true);
@@ -123,6 +127,7 @@ pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
         .ir = builder,
         .fmtD = fmt_d_val,
         .fmtS = fmt_s_val,
+        .fmtB = fmt_b_val,
         .fns = fns,
         .fndefs = fndefs,
         .sayFn = sayFn,
@@ -241,6 +246,10 @@ pub fn printString(b: *Builder, value: Value) void {
     _ = b.ir.call(b.printfFn, &.{ b.fmtS, value }, "");
 }
 
+pub fn printBool(b: *Builder, value: Value) void {
+    _ = b.ir.call(b.printfFn, &.{ b.fmtB, value }, "");
+}
+
 pub fn printDecimal(b: *Builder, value: Value) void {
     _ = b.ir.call(b.printfFn, &.{ b.fmtD, value }, "");
 }
@@ -252,6 +261,10 @@ pub fn setLoadedVar(b: *Builder, var_name: []const u8, ptr: llvm.Value) void {
 
 pub fn getAndLoadValue(b: *Builder, var_name: []const u8) Error!llvm.Value {
     const ptr = try b.getVar(var_name);
+    return b.ir.load2(.Double(), ptr, "");
+}
+
+pub fn load(b: *Builder, ptr: Value) Value {
     return b.ir.load2(.Double(), ptr, "");
 }
 

@@ -193,8 +193,14 @@ pub fn buildMultiply(ctx: *Context, _: [][]const u8) !void {
 }
 
 pub fn buildPrintResult(ctx: *Context, _: [][]const u8) !void {
-    const result = try ctx.opStack.popDouble(&ctx.builder);
-    ctx.builder.printDecimal(result);
+    const result = try ctx.opStack.pop();
+
+    switch (result) {
+        .bool => |val| ctx.builder.printBool(val),
+        .double => |val| ctx.builder.printDecimal(val),
+        .reference => ctx.builder.printDecimal(try result.asDouble(&ctx.builder)),
+        else => unreachable,
+    }
 }
 
 pub fn buildPrintVar(ctx: *Context, tokens: [][]const u8) !void {
@@ -238,7 +244,7 @@ pub fn buildDeclare(ctx: *Context, tokens: [][]const u8) !void {
     ctx.opStack.pushData(ctx.gpa, .{ .label = variable_name });
     _ = try ctx.opStack.doOp(ctx.gpa, &ctx.builder, .{ .memory = .Declare });
 
-    ctx.opStack.pushOp(ctx.gpa, .{ .control = .Stop });
+    ctx.opStack.pushOp(ctx.gpa, .{ .control = .Result });
     ctx.opStack.pushData(ctx.gpa, .{ .reference = variable_name });
     ctx.opStack.pushOp(ctx.gpa, .{ .memory = .Store });
 }
@@ -290,7 +296,7 @@ pub fn buildRet(ctx: *Context, _: [][]const u8) !void {
 }
 
 pub fn startExpr(ctx: *Context, _: [][]const u8) !void {
-    ctx.opStack.pushOp(ctx.gpa, .{ .control = .Stop });
+    ctx.opStack.pushOp(ctx.gpa, .{ .control = .Result });
 }
 
 pub fn endExpr(ctx: *Context, _: [][]const u8) !void {
@@ -299,7 +305,7 @@ pub fn endExpr(ctx: *Context, _: [][]const u8) !void {
 
 pub fn restartExpr(ctx: *Context, _: [][]const u8) !void {
     try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
-    ctx.opStack.pushOp(ctx.gpa, .{ .control = .Stop });
+    ctx.opStack.pushOp(ctx.gpa, .{ .control = .Result });
 }
 
 pub fn buildSection(ctx: *Context, tokens: [][]const u8) !void {

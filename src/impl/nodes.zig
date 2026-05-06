@@ -202,9 +202,12 @@ const expression = SyntaxTreeNode{
 
 const conditional = SyntaxTreeNode{
     .debug = .init("cond"),
+    .buildFn = Context.startExpr,
     .branches = &.{
         &.{
             .next(expression),
+            .buildDetour(Context.endExpr),
+            .cancelDefer(),
         },
         &.{
             .next(op_gt),
@@ -218,8 +221,9 @@ const conditional = SyntaxTreeNode{
             .next(expression),
         },
         &.{
-            .restart(.match("et")),
-            .restart(.match("ou")),
+            .restart(.{ .deferConsume = true, .matchFns = fns.eql("et"), .buildFn = Context.restartExpr }),
+            .restart(.{ .deferConsume = true, .matchFns = fns.eql("ou"), .buildFn = Context.restartExpr }),
+            .buildLeaf(Context.endExpr),
         },
     },
 };

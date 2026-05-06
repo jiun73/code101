@@ -47,16 +47,16 @@ pub const Data = union(enum) {
 
     pub fn print(data: Data, comptime logty: log.LogTy) void {
         switch (data) {
-            .bool => |v| return log.print("[{x}]", .{@intFromPtr(v.ref)}, logty),
-            .double => |v| return log.print("[{x}]", .{@intFromPtr(v.ref)}, logty),
-            .reference => |ref| return log.print("[{s}]", .{ref}, logty),
+            .bool => |v| return log.print("bool[{x}]", .{@intFromPtr(v.ref)}, logty),
+            .double => |v| return log.print("double[{x}]", .{@intFromPtr(v.ref)}, logty),
+            .reference => |ref| return log.print("ref[{s}]", .{ref}, logty),
             else => return log.print("[?]", .{}, logty),
         }
     }
 };
 
 pub const Op = union(enum) {
-    control: enum { Stop },
+    control: enum { Result },
     arithmetic: union(enum) {
         unary: enum {
             Square,
@@ -252,7 +252,7 @@ pub fn resolve(self: *OpStack, gpa: std.mem.Allocator, builder: *Builder) (Error
     while (self.opStack.pop()) |op| {
         switch (op) {
             .control => |c_op| switch (c_op) {
-                .Stop => {
+                .Result => {
                     log.println("resolved: ", .{}, .Ops);
                     self.printstack();
                     return;

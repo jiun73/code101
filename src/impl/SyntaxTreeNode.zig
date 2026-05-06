@@ -93,8 +93,9 @@ pub const Branch = struct {
 
 debug: ?DebugInfo = null,
 branches: []const []const Branch = &.{},
-matchFns: []const (*const MatchFn) = &.{},
+matchFns: []const (*const MatchFn) = &.{}, //if matchFns.len == 0 then node is considered 'virtual'. Failure to match the first branch will result in returning to first non-virtual node in the stack
 deferConsume: bool = false, //test for match, but don't consume it right away. instead, set a 'consume offset'
+//catchError: bool = false, //on error, if a 'catch error' is found on the stack, set it as the current node with the next branch node
 buildFn: ?(*const BuildFn) = null, //Called when a node is matched
 
 pub fn match(comptime str: []const u8) SyntaxTreeNode {
@@ -173,6 +174,7 @@ pub fn isMatch(node: SyntaxTreeNode, tokens: [][]const u8) MatchFnRet {
 
 const StackRef = struct {
     ptr: *const SyntaxTreeNode,
+    has_matched: bool = false,
     branch_i: usize = 0,
     node_i: usize = std.math.maxInt(usize),
 };
@@ -263,6 +265,8 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
 
             switch (result) {
                 .true => |trueval| {
+                    stack.items[stack.items.len - 1].has_matched = true;
+
                     var consumed_count: usize = 0;
                     switch (trueval) {
                         .consume => |consumed| {
@@ -299,7 +303,14 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
             }
         }
 
-        ctx.printLineError(@ptrCast(start_tokens[0].ptr));
+        if (!current.has_matched and current.ptr.matchFns.len == 0) {
+            _ = stack.pop();
+            tab(stack.items, false);
+            log.println("no match: virtual node, so returning", .{}, .Traversal);
+            continue :loop;
+        }
+
+        ctx.printLineError(@ptrCast(tokens[0].ptr));
         return MatchError.DoesNotMatch;
     }
 }
