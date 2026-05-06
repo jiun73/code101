@@ -1,0 +1,49 @@
+[1mdiff --git a/sortie.ll b/sortie.ll[m
+[1mindex 32aaad0..bbe9220 100644[m
+[1m--- a/sortie.ll[m
+[1m+++ b/sortie.ll[m
+[36m@@ -4,6 +4,9 @@[m [msource_filename = "programme"[m
+ @fmt_b = internal unnamed_addr constant [4 x i8] c"%d\0A\00"[m
+ @fmt_d = internal unnamed_addr constant [6 x i8] c"%.2f\0A\00"[m
+ @fmt_s = internal unnamed_addr constant [4 x i8] c"%s\0A\00"[m
+[32m+[m[32m@message = private unnamed_addr constant [9 x i8] c"Distance\00", align 1[m
+[32m+[m[32m@var_name = private unnamed_addr constant [2 x i8] c"x\00", align 1[m
+[32m+[m[32m@var_name.1 = private unnamed_addr constant [2 x i8] c"y\00", align 1[m
+ [m
+ declare i8 @printf(ptr, ...)[m
+ [m
+[36m@@ -17,15 +20,30 @@[m [mdeclare double @llvm.pow.f64(double) #0[m
+ [m
+ declare void @say(ptr)[m
+ [m
+[32m+[m[32mdeclare double @read_double(ptr)[m
+[32m+[m
+ declare void @sleep(i32)[m
+ [m
+[32m+[m[32mdefine double @"hypot\C3\A9nuse"(double %0, double %1) {[m
+[32m+[m[32mentree:[m
+[32m+[m[32m  call void @say(ptr @message)[m
+[32m+[m[32m  %2 = fmul double %0, %0[m
+[32m+[m[32m  %3 = fmul double %1, %1[m
+[32m+[m[32m  %4 = fadd double %2, %3[m
+[32m+[m[32m  %5 = call double @llvm.sqrt.f64(double %4)[m
+[32m+[m[32m  ret double %5[m
+[32m+[m[32m}[m
+[32m+[m
+ define i32 @main(i32 %0, ptr %1) {[m
+ entree:[m
+   %x = alloca double, align 8[m
+[31m-  store double 3.000000e+00, ptr %x, align 8[m
+[31m-  %2 = call i8 (ptr, ...) @printf(ptr @fmt_d, ptr %x)[m
+[31m-  %3 = fcmp ogt ptr %x, double 2.000000e+00[m
+[31m-  %4 = call i8 (ptr, ...) @printf(ptr @fmt_b, i1 %3)[m
+[32m+[m[32m  %2 = call double @read_double(ptr @var_name)[m
+[32m+[m[32m  store double %2, ptr %x, align 8[m
+[32m+[m[32m  %y = alloca double, align 8[m
+[32m+[m[32m  %3 = call double @read_double(ptr @var_name.1)[m
+[32m+[m[32m  store double %3, ptr %y, align 8[m
+[32m+[m[32m  %4 = call double @"hypot\C3\A9nuse"(ptr %x, ptr %y)[m
+[32m+[m[32m  %5 = call i8 (ptr, ...) @printf(ptr @fmt_d, double %4)[m
+   ret i32 0[m
+ }[m
+ [m

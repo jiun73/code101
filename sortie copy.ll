@@ -27,11 +27,13 @@ declare void @sleep(i32)
 define double @"hypot\C3\A9nuse"(double %0, double %1) {
 entree:
   call void @say(ptr @message)
-  %2 = fmul double %0, %0
-  %3 = fmul double %1, %1
-  %4 = fadd double %2, %3
-  %5 = call double @llvm.sqrt.f64(double %4)
-  ret double %5
+  %2 = load double, double %0, align 8
+  %3 = fmul double %2, %2
+  %4 = load double, double %1, align 8
+  %5 = fmul double %4, %4
+  %6 = fadd double %3, %5
+  %7 = call double @llvm.sqrt.f64(double %6)
+  ret double %7
 }
 
 define i32 @main(i32 %0, ptr %1) {

@@ -1,12 +1,12 @@
 const std = @import("std");
-const llvm = @import("llvm");
+const zllvm = @import("zllvm");
 const impl = @import("impl");
 
-pub fn compile(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8) !llvm.Module {
+pub fn compile(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8) !zllvm.Module {
     var tokens = try impl.Tokenizer.tokenize(gpa, progressNode, source);
     defer tokens.deinit(gpa);
     const emitNode = progressNode.start("LLVM Emit IR", tokens.items.len);
-    const module = llvm.Module.create("programme");
+    const module = zllvm.Module.create("programme");
     var ctx = impl.Context.init(gpa, progressNode, source, module);
     defer ctx.deinit();
     try ctx.build(gpa, tokens.items);
@@ -39,7 +39,7 @@ pub fn main() !void {
     var args = full_args[1..];
 
     std.log.info("code101", .{});
-    std.log.info("LLVM: {}", .{llvm.getVersion()});
+    std.log.info("LLVM: {}", .{zllvm.getVersion()});
 
     var input_path_opt: ?[]const u8 = null;
     var output_path_opt: ?[]const u8 = null;
@@ -49,8 +49,8 @@ pub fn main() !void {
 
     while (args.len > 0) {
         if (std.mem.eql(u8, args[0], "rouler") and !run and consumed == 0) {
-            llvm.linkInMCJIT();
-            llvm.initializeNativeAsmPrinter();
+            zllvm.linkInMCJIT();
+            zllvm.initializeNativeAsmPrinter();
 
             run = true;
             args = args[1..];
@@ -91,9 +91,9 @@ pub fn main() !void {
 
     const output_path = if (output_path_opt != null) output_path_opt.? else "sortie.ll";
 
-    llvm.initializeNativeTarget();
-    llvm.initializeAllTargetInfos();
-    llvm.initializeNativeAsmParser();
+    zllvm.initializeNativeTarget();
+    zllvm.initializeAllTargetInfos();
+    zllvm.initializeNativeAsmParser();
 
     const progressNode = std.Progress.start(.{ .root_name = "Compilation" });
 
@@ -104,14 +104,15 @@ pub fn main() !void {
 
     if (run) {
         std.log.info("liaison de la librarie espeak", .{});
-        try llvm.loadLibraryPermanently("libespeak-ng.so");
+        _ = zllvm.support.LLVMLoadLibraryPermanently(null);
+        try zllvm.loadLibraryPermanently("libespeak-ng.so");
 
-        const file = @embedFile("lib.ll");
-
-        const espeak_bds = try llvm.parseIrInContext(module.getContext(), .fromSlice(file, "lib.ll"));
+        const file = @embedFile("code101_lib");
+        const espeak_bds = try zllvm.parseBc(.fromSlice(file, "lib.bc"));
         try module.link(espeak_bds);
         std.log.info("création de l'engin d'éxécution", .{});
-        const exec = try llvm.ExecutionEngine.createForModule(module);
+        const exec = try zllvm.ExecutionEngine.createMCJITForModule(module);
+        //exec.runStaticConstructors();
         const main_fn = exec.findFunction("main");
         std.log.info("exécution...", .{});
         _ = exec.runFunctionAsMain(main_fn, 0, &.{});

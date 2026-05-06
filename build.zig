@@ -1,15 +1,44 @@
 const std = @import("std");
 
+pub fn buildStdLib(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Module {
+    const lib = b.addLibrary(.{
+        .name = "test TTS",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/stdlib/root.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{},
+        }),
+    });
+
+    lib.root_module.linkSystemLibrary("espeak-ng", .{});
+
+    const bc_file = lib.getEmittedLlvmBc();
+    const ir_file = lib.getEmittedLlvmIr();
+    const install_ir = b.addInstallFile(ir_file, "lib.ll");
+    b.getInstallStep().dependOn(&install_ir.step);
+    //b.getInstallStep().dependOn(&install_ir.step);
+
+    //const write_step = b.addWriteFiles();
+    //const ir_source = write_step.addCopyFile(ir_file, "lib.bc");
+
+    return b.createModule(.{
+        .root_source_file = bc_file,
+    });
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    const ir_mod = buildStdLib(b, target);
 
     const llvm_dep = b.dependency("llvm", .{ .target = target, .optimize = optimize });
     const llvm_c_mod = llvm_dep.module("llvm");
     const clang_c_mod = llvm_dep.module("clang");
 
     const llvm_bds_mod = b.addModule("impl", .{
-        .root_source_file = b.path("src/llvm/llvm.zig"),
+        .root_source_file = b.path("src/llvm/zllvm.zig"),
         .target = target,
         .imports = &.{
             .{ .name = "cllvm", .module = llvm_c_mod },
@@ -21,7 +50,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/impl/root.zig"),
         .target = target,
         .imports = &.{
-            .{ .name = "llvm", .module = llvm_bds_mod },
+            .{ .name = "zllvm", .module = llvm_bds_mod },
         },
     });
 
@@ -30,8 +59,31 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .imports = &.{
             .{ .name = "impl", .module = impl_mod },
-            .{ .name = "llvm", .module = llvm_bds_mod },
+            .{ .name = "zllvm", .module = llvm_bds_mod },
         },
+    });
+
+    const lib = b.addLibrary(.{
+        .name = "code101",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "code101", .module = mod },
+                .{ .name = "zllvm", .module = llvm_bds_mod },
+                .{ .name = "impl", .module = impl_mod },
+                .{ .name = "code101_lib", .module = ir_mod },
+            },
+        }),
+    });
+
+    //std.debug.print("{s}", .{ir_file.generated.file.getPath()});
+
+    const compiler_bc = lib.getEmittedLlvmBc();
+
+    const compiler_mod = b.createModule(.{
+        .root_source_file = compiler_bc,
     });
 
     const exe = b.addExecutable(.{
@@ -42,11 +94,15 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "code101", .module = mod },
-                .{ .name = "llvm", .module = llvm_bds_mod },
+                .{ .name = "zllvm", .module = llvm_bds_mod },
                 .{ .name = "impl", .module = impl_mod },
+                .{ .name = "code101_lib", .module = ir_mod },
+                .{ .name = "self", .module = compiler_mod },
             },
         }),
     });
+
+    //std.debug.print("{s}", .{ir_file.generated.file.getPath()});
 
     b.installArtifact(exe);
 

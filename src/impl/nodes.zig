@@ -2,7 +2,7 @@ const std = @import("std");
 const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
 const Context = @import("Context.zig");
 const fns = @import("fns.zig");
-const llvm = @import("llvm");
+const zllvm = @import("zllvm");
 
 pub const master = SyntaxTreeNode{
     .debug = .init("master"),
@@ -65,6 +65,7 @@ const phrase = SyntaxTreeNode{
     .branches = &.{
         &.{
             .next(expr_dire),
+            .next(expr_dire_val),
             .next(expr_attendre),
             .next(expr_calculer),
             .next(expr_afficher_message),
@@ -73,6 +74,7 @@ const phrase = SyntaxTreeNode{
             .next(expr_declarer),
             .next(expr_effectuer),
             .next(expr_eval_cond),
+            .next(expr_demander),
         },
         &.{
             .prev(.{ .matchFns = fns.eql("et") }),
@@ -104,6 +106,16 @@ const expr_attendre = SyntaxTreeNode{
 const expr_dire = SyntaxTreeNode{
     .matchFns = fns.eql("dire [str]"),
     .buildFn = Context.buildTTSMessage,
+};
+
+const expr_dire_val = SyntaxTreeNode{
+    .matchFns = fns.eql("dire la valeur de [var]"),
+    .buildFn = Context.buildTTSMessage2,
+};
+
+const expr_demander = SyntaxTreeNode{
+    .matchFns = fns.eql("demander un nombre réel [var]"),
+    .buildFn = Context.buildAsk,
 };
 
 const expr_afficher_message = SyntaxTreeNode{

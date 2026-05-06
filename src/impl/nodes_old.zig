@@ -2,7 +2,7 @@ const std = @import("std");
 const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
 const Context = @import("Context.zig");
 const fns = @import("fns.zig");
-const llvm = @import("llvm");
+const zllvm = @import("zllvm");
 
 pub const masterNode: SyntaxTreeNode = .{
     .debug = .init("master"),

@@ -1,8 +1,8 @@
 const std = @import("std");
-const llvm = @import("llvm");
-const target = llvm.target;
-const types = llvm.types;
-const core = llvm.core;
+const zllvm = @import("zllvm");
+const target = zllvm.target;
+const types = zllvm.types;
+const core = zllvm.core;
 const SyntaxTreeNode = @import("SyntaxTreeNode.zig").SyntaxTreeNode;
 const OpStack = @import("OpStack.zig");
 const Builder = @import("Builder.zig");
@@ -132,7 +132,7 @@ pub fn printLineError(ctx: *Context, char: *const u8) void {
     std.debug.print("^ ici\n", .{});
 }
 
-pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8, module: llvm.Module) Context {
+pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8, module: zllvm.Module) Context {
     const opStack = OpStack.init(gpa);
     const builder = Builder.init(gpa, module);
     const typeStack = std.ArrayList(Builder.DataType).initCapacity(gpa, 4) catch @panic("OOM");
@@ -175,6 +175,22 @@ pub fn buildTTSMessage(ctx: *Context, tokens: [][]const u8) !void {
     ctx.builder.ttsString(str);
 }
 
+pub fn buildTTSMessage2(ctx: *Context, tokens: [][]const u8) !void {
+    const var_name = tokens[4];
+    ctx.builder.ttsDouble(try ctx.builder.getVar(var_name));
+}
+
+pub fn buildAsk(ctx: *Context, tokens: [][]const u8) !void {
+    const var_name = tokens[4];
+    const var_name_nt = ctx.gpa.dupeZ(u8, var_name[0..var_name.len]) catch @panic("OOM");
+    defer ctx.gpa.free(var_name_nt);
+    const var_name_str = ctx.builder.ir.globalStringPtr(var_name_nt, "var_name");
+    log.print("{s}", .{var_name}, .Building);
+    const varn = ctx.builder.declare(ctx.gpa, var_name);
+    const val = ctx.builder.ir.call(ctx.builder.askFn, &.{var_name_str}, "");
+    _ = ctx.builder.ir.store(val, varn);
+}
+
 pub fn buildPrintMessage(ctx: *Context, tokens: [][]const u8) !void {
     const message = tokens[3];
     const message_nt = ctx.gpa.dupeZ(u8, message[1 .. message.len - 1]) catch @panic("OOM");
@@ -198,7 +214,9 @@ pub fn buildPrintResult(ctx: *Context, _: [][]const u8) !void {
     switch (result) {
         .bool => |val| ctx.builder.printBool(val),
         .double => |val| ctx.builder.printDecimal(val),
-        .reference => ctx.builder.printDecimal(try result.asDouble(&ctx.builder)),
+        .reference => {
+            ctx.builder.printDecimal(try result.asDouble(&ctx.builder));
+        },
         else => unreachable,
     }
 }
@@ -218,7 +236,7 @@ pub fn buildVariablePush(ctx: *Context, tokens: [][]const u8) !void {
 pub fn buildConstPush(ctx: *Context, tokens: [][]const u8) !void {
     const value_str = tokens[0];
     const value_int = std.fmt.parseFloat(f64, value_str) catch @panic("invalid");
-    const value = llvm.Value.constDouble(value_int);
+    const value = zllvm.Value.constDouble(value_int);
     log.println("pushing const {}", .{value_int}, .Building);
     ctx.opStack.pushData(ctx.gpa, .{ .double = value });
 }
@@ -226,7 +244,7 @@ pub fn buildConstPush(ctx: *Context, tokens: [][]const u8) !void {
 pub fn buildSleep(ctx: *Context, tokens: [][]const u8) !void {
     const value_str = tokens[1];
     const value_int = std.fmt.parseInt(u32, value_str, 10) catch @panic("invalid");
-    const value = llvm.Value.constInt32(value_int);
+    const value = zllvm.Value.constInt32(value_int);
     ctx.builder.sleep(value);
 }
 
@@ -278,7 +296,7 @@ pub fn buildRet(ctx: *Context, _: [][]const u8) !void {
 
     switch (fndef.*) {
         .main => {
-            _ = ctx.builder.ir.ret(llvm.Value.constInt32(0));
+            _ = ctx.builder.ir.ret(zllvm.Value.constInt32(0));
         },
         .fun => |*fun| {
             if (fun.returnType == null) {

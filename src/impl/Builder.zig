@@ -1,10 +1,10 @@
 const std = @import("std");
 const log = @import("log.zig");
-const llvm = @import("llvm");
+const zllvm = @import("zllvm");
 
 const Builder = @This();
 
-pub const Value = llvm.Value;
+pub const Value = zllvm.Value;
 pub const Ref = []const u8;
 
 pub const DataType = enum {
@@ -13,11 +13,11 @@ pub const DataType = enum {
     String,
     Bool,
 
-    pub fn toLLVM(ty: DataType) llvm.Type {
+    pub fn toLLVM(ty: DataType) zllvm.Type {
         switch (ty) {
             .Int => return .Int32(),
             .Real => return .Double(),
-            .String => return llvm.Type.Int8().Ptr(),
+            .String => return zllvm.Type.Int8().Ptr(),
             .Bool => return .Bool(),
         }
     }
@@ -77,44 +77,50 @@ pub const ValueRef = union(enum) {
 
 pub const Error = error{VariableNotDeclared};
 
-module: llvm.Module,
-ir: llvm.Builder,
-vars: std.StringHashMap(Value),
-fns: std.StringHashMap(llvm.Function),
+const SavedVar = struct { value: Value, mustLoad: bool = false };
+
+module: zllvm.Module,
+ir: zllvm.Builder,
+vars: std.StringHashMap(SavedVar),
+fns: std.StringHashMap(zllvm.Function),
 fndefs: std.StringHashMap(FunctionDefinition),
 
-printfFn: llvm.Function,
-sqrtFn: llvm.Function,
-cbrtFn: llvm.Function,
-powFn: llvm.Function,
-sayFn: llvm.Function,
-sleepFn: llvm.Function,
+printfFn: zllvm.Function,
+sqrtFn: zllvm.Function,
+cbrtFn: zllvm.Function,
+powFn: zllvm.Function,
+sayFn: zllvm.Function,
+sayDbFn: zllvm.Function,
+sleepFn: zllvm.Function,
+askFn: zllvm.Function,
 
-fmtS: llvm.Value,
-fmtD: llvm.Value,
-fmtB: llvm.Value,
+fmtS: zllvm.Value,
+fmtD: zllvm.Value,
+fmtB: zllvm.Value,
 
-pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
-    const builder = llvm.Builder.create();
+pub fn init(gpa: std.mem.Allocator, module: zllvm.Module) Builder {
+    const builder = zllvm.Builder.create();
 
-    const printfFn = module.addFn("printf", .create(llvm.Type.Int8(), &.{llvm.Type.Int8().Ptr()}, true));
-    const sqrtFn = module.addFn("llvm.sqrt.f64", .create(llvm.Type.Double(), &.{llvm.Type.Double()}, false));
-    const cbrtFn = module.addFn("llvm.cbrt.f64", .create(llvm.Type.Double(), &.{llvm.Type.Double()}, false));
-    const powFn = module.addFn("llvm.pow.f64", .create(llvm.Type.Double(), &.{llvm.Type.Double()}, false));
-    const sayFn = module.addFn("say", .create(llvm.Type.Void(), &.{llvm.Type.Int8().Ptr()}, false));
-    const sleepFn = module.addFn("sleep", .create(llvm.Type.Void(), &.{llvm.Type.Int32()}, false));
+    const printfFn = module.addFn("printf", .create(zllvm.Type.Int8(), &.{zllvm.Type.Int8().Ptr()}, true));
+    const sqrtFn = module.addFn("llvm.sqrt.f64", .create(zllvm.Type.Double(), &.{zllvm.Type.Double()}, false));
+    const cbrtFn = module.addFn("llvm.cbrt.f64", .create(zllvm.Type.Double(), &.{zllvm.Type.Double()}, false));
+    const powFn = module.addFn("llvm.pow.f64", .create(zllvm.Type.Double(), &.{zllvm.Type.Double()}, false));
+    const sayFn = module.addFn("say", .create(zllvm.Type.Void(), &.{zllvm.Type.Int8().Ptr()}, false));
+    const sayDbFn = module.addFn("say_double", .create(zllvm.Type.Void(), &.{zllvm.Type.Double()}, false));
+    const askFn = module.addFn("read_double", .create(zllvm.Type.Double(), &.{zllvm.Type.Int8().Ptr()}, false));
+    const sleepFn = module.addFn("sleep", .create(zllvm.Type.Void(), &.{zllvm.Type.Int32()}, false));
 
-    const fmt_b = llvm.Value.constString("%d\n", false);
+    const fmt_b = zllvm.Value.constString("%d\n", false);
     const fmt_b_val = module.addGlobal(fmt_b.getType(), "fmt_b").setInitializer(fmt_b).setGlobalConstant(true).setLinkage(.LLVMInternalLinkage).setUnnamedAddr(true);
 
-    const fmt_d = llvm.Value.constString("%.2f\n", false);
+    const fmt_d = zllvm.Value.constString("%.2f\n", false);
     const fmt_d_val = module.addGlobal(fmt_d.getType(), "fmt_d").setInitializer(fmt_d).setGlobalConstant(true).setLinkage(.LLVMInternalLinkage).setUnnamedAddr(true);
 
-    const fmt_s = llvm.Value.constString("%s\n", false);
+    const fmt_s = zllvm.Value.constString("%s\n", false);
     const fmt_s_val = module.addGlobal(fmt_s.getType(), "fmt_s").setInitializer(fmt_s).setGlobalConstant(true).setLinkage(.LLVMInternalLinkage).setUnnamedAddr(true);
 
-    const vars = std.StringHashMap(Value).init(gpa);
-    const fns = std.StringHashMap(llvm.Function).init(gpa);
+    const vars = std.StringHashMap(SavedVar).init(gpa);
+    const fns = std.StringHashMap(zllvm.Function).init(gpa);
     const fndefs = std.StringHashMap(FunctionDefinition).init(gpa);
 
     return .{
@@ -122,6 +128,7 @@ pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
         .cbrtFn = cbrtFn,
         .powFn = powFn,
         .sqrtFn = sqrtFn,
+        .askFn = askFn,
         .vars = vars,
         .module = module,
         .ir = builder,
@@ -130,6 +137,7 @@ pub fn init(gpa: std.mem.Allocator, module: llvm.Module) Builder {
         .fmtB = fmt_b_val,
         .fns = fns,
         .fndefs = fndefs,
+        .sayDbFn = sayDbFn,
         .sayFn = sayFn,
         .sleepFn = sleepFn,
     };
@@ -147,14 +155,24 @@ pub fn deinit(b: *Builder, gpa: std.mem.Allocator) void {
 }
 
 pub fn getVar(b: *Builder, var_name: []const u8) Error!Value {
-    return b.vars.get(var_name) orelse {
+    const v = b.vars.get(var_name) orelse {
         log.println("Variable '{s}' not found", .{var_name}, .Building);
         return Error.VariableNotDeclared;
     };
+
+    if (v.mustLoad) {
+        return b.load(v.value);
+    }
+
+    return v.value;
 }
 
 pub fn setVar(b: *Builder, var_name: []const u8, value: Value) void {
-    b.vars.put(var_name, value) catch @panic("OOM");
+    b.vars.put(var_name, .{ .value = value }) catch @panic("OOM");
+}
+
+pub fn setVarPtr(b: *Builder, var_name: []const u8, value: Value) void {
+    b.vars.put(var_name, .{ .value = value, .mustLoad = true }) catch @panic("OOM");
 }
 
 pub fn store(b: *Builder, LHS: Ref, RHS: Value) Error!Value {
@@ -238,6 +256,10 @@ pub fn ttsString(b: *Builder, value: Value) void {
     _ = b.ir.call(b.sayFn, &.{value}, "");
 }
 
+pub fn ttsDouble(b: *Builder, value: Value) void {
+    _ = b.ir.call(b.sayDbFn, &.{value}, "");
+}
+
 pub fn sleep(b: *Builder, value: Value) void {
     _ = b.ir.call(b.sleepFn, &.{value}, "");
 }
@@ -254,12 +276,12 @@ pub fn printDecimal(b: *Builder, value: Value) void {
     _ = b.ir.call(b.printfFn, &.{ b.fmtD, value }, "");
 }
 
-pub fn setLoadedVar(b: *Builder, var_name: []const u8, ptr: llvm.Value) void {
-    const lvar = b.ir.load2(llvm.Type.Double(), ptr, "");
+pub fn setLoadedVar(b: *Builder, var_name: []const u8, ptr: zllvm.Value) void {
+    const lvar = b.ir.load2(zllvm.Type.Double(), ptr, "");
     b.vars.put(var_name, lvar) catch @panic("OOM");
 }
 
-pub fn getAndLoadValue(b: *Builder, var_name: []const u8) Error!llvm.Value {
+pub fn getAndLoadValue(b: *Builder, var_name: []const u8) Error!zllvm.Value {
     const ptr = try b.getVar(var_name);
     return b.ir.load2(.Double(), ptr, "");
 }
@@ -272,12 +294,12 @@ pub fn declare(b: *Builder, gpa: std.mem.Allocator, var_name: []const u8) Value 
     log.println("declaration", .{}, .Building);
     const ptr = b.ir.allocaDupeZ(.Double(), var_name, gpa);
     //_ = b.ir.store(value, ptr);
-    b.setVar(var_name, ptr);
+    b.setVarPtr(var_name, ptr);
     return ptr;
 }
 
 pub fn main(b: *Builder) !void {
-    const fun = b.module.addFn("main", .create(llvm.Type.Int32(), &.{ llvm.Type.Int32(), llvm.Type.Int8().Ptr().Ptr() }, false));
+    const fun = b.module.addFn("main", .create(zllvm.Type.Int32(), &.{ zllvm.Type.Int32(), zllvm.Type.Int8().Ptr().Ptr() }, false));
     const entry = fun.appendBasicBlock("entree");
     b.ir.positionAtEnd(entry);
 }
@@ -288,14 +310,14 @@ pub fn function(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) vo
 
     log.println("param cnt {}", .{def.params.len}, .Building);
 
-    const paramsLLVM = gpa.alloc(llvm.Type, def.params.len) catch @panic("OOM");
+    const paramsLLVM = gpa.alloc(zllvm.Type, def.params.len) catch @panic("OOM");
     defer gpa.free(paramsLLVM);
 
     for (def.params, 0..) |param, i| {
         paramsLLVM[i] = param.ty.toLLVM();
     }
 
-    const fun = b.module.addFn(name_nt, .create(if (def.returnType) |rt| rt.toLLVM() else llvm.Type.Void(), paramsLLVM, false));
+    const fun = b.module.addFn(name_nt, .create(if (def.returnType) |rt| rt.toLLVM() else zllvm.Type.Void(), paramsLLVM, false));
     const entry = fun.appendBasicBlock("entree");
     b.ir.positionAtEnd(entry);
 

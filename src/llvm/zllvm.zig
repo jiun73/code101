@@ -1,18 +1,18 @@
-const llvm = @import("cllvm");
+const cllvm = @import("cllvm");
 const std = @import("std");
-pub const C = llvm;
+pub const C = cllvm;
 pub const clang = @import("clang");
-pub const irreader = llvm.irreader;
-pub const linker = llvm.linker;
-pub const target = llvm.target;
-pub const types = llvm.types;
-pub const core = llvm.core;
-pub const jit = llvm.jit;
-pub const engine = llvm.engine;
-pub const support = llvm.support;
-pub const error_handling = llvm.error_handling;
-pub const errors = llvm.errors;
-pub const target_machine = llvm.target_machine;
+pub const irreader = cllvm.irreader;
+pub const linker = cllvm.linker;
+pub const target = cllvm.target;
+pub const types = cllvm.types;
+pub const core = cllvm.core;
+pub const jit = cllvm.jit;
+pub const engine = cllvm.engine;
+pub const support = cllvm.support;
+pub const error_handling = cllvm.error_handling;
+pub const errors = cllvm.errors;
+pub const target_machine = cllvm.target_machine;
 pub const util = @import("llvm.util.zig");
 
 pub const Error = error{
@@ -26,8 +26,18 @@ pub const Version = struct { major: c_uint, minor: c_uint, patch: c_uint };
 
 pub fn getVersion() Version {
     var version: Version = undefined;
-    llvm.core.LLVMGetVersion(&version.major, &version.minor, &version.patch);
+    cllvm.core.LLVMGetVersion(&version.major, &version.minor, &version.patch);
     return version;
+}
+
+pub fn parseBc(buff: MemBuff) Error!Module {
+    var mod: types.LLVMModuleRef = undefined;
+    var outm: [*c]u8 = undefined;
+    if (cllvm.bitreader.LLVMParseBitcode(buff.toC(), &mod, &outm) != 0) {
+        std.debug.print("{s}", .{std.mem.span(outm)});
+        return Error.parseIrInContextError;
+    }
+    return .toZig(mod);
 }
 
 pub fn parseIrInContext(ctx: Context, buff: MemBuff) Error!Module {
@@ -127,7 +137,7 @@ pub const Module = struct {
     }
 
     pub fn writeBitecodeToFile(module: Module, path: [*:0]const u8) c_int {
-        return llvm.bitwriter.LLVMWriteBitcodeToFile(module.toC(), path);
+        return cllvm.bitwriter.LLVMWriteBitcodeToFile(module.toC(), path);
     }
 
     pub fn addAlias2(module: Module, ty: Type, addrSpace: c_uint, aliasee: Value, name: [*:0]const u8) Value {
@@ -241,7 +251,7 @@ pub const BasicBlock = struct {
 pub const Type = struct {
     ref: types.LLVMTypeRef,
 
-    pub fn getKind(t: Type) llvm.types.LLVMTypeKind {
+    pub fn getKind(t: Type) cllvm.types.LLVMTypeKind {
         return core.LLVMGetTypeKind(t.toC());
     }
 
@@ -487,7 +497,7 @@ pub const Target = struct {
 
     pub fn getFromTriple(triple: [*:0]const u8) Target {
         var ref: types.LLVMTargetRef = null;
-        _ = llvm.target_machine.LLVMGetTargetFromTriple(@ptrCast(triple), @ptrCast(&ref), null);
+        _ = cllvm.target_machine.LLVMGetTargetFromTriple(@ptrCast(triple), @ptrCast(&ref), null);
         return .toZig(ref);
     }
 
@@ -517,15 +527,15 @@ pub const TargetMachine = struct {
     }
 
     pub fn getDefaultTargetTriple() [*:0]const u8 {
-        return @ptrCast(llvm.target_machine.LLVMGetDefaultTargetTriple());
+        return @ptrCast(cllvm.target_machine.LLVMGetDefaultTargetTriple());
     }
 
     pub fn getHostCPUName() [*:0]const u8 {
-        return @ptrCast(llvm.target_machine.LLVMGetHostCPUName());
+        return @ptrCast(cllvm.target_machine.LLVMGetHostCPUName());
     }
 
     pub fn getHostCPUFeatures() [*:0]const u8 {
-        return @ptrCast(llvm.target_machine.LLVMGetHostCPUFeatures());
+        return @ptrCast(cllvm.target_machine.LLVMGetHostCPUFeatures());
     }
 
     pub fn create(
@@ -538,7 +548,7 @@ pub const TargetMachine = struct {
         codeModel: CodeModel,
     ) TargetMachine {
         return .toZig(
-            llvm.target_machine.LLVMCreateTargetMachine(
+            cllvm.target_machine.LLVMCreateTargetMachine(
                 @ptrCast(trg.toC()),
                 target_name,
                 cpu,
@@ -551,7 +561,7 @@ pub const TargetMachine = struct {
     }
 
     pub fn EmitToFile(tm: TargetMachine, module: Module, outfile: [:0]const u8, codegen: CodeGenFileType) void {
-        _ = llvm.target_machine.LLVMTargetMachineEmitToFile(
+        _ = cllvm.target_machine.LLVMTargetMachineEmitToFile(
             tm.toC(),
             module.toC(),
             outfile,
@@ -562,7 +572,7 @@ pub const TargetMachine = struct {
 };
 
 pub const PassManager = struct {
-    ref: llvm.types.LLVMPassManagerRef,
+    ref: cllvm.types.LLVMPassManagerRef,
 
     pub fn toZig(ref: types.LLVMPassManagerRef) PassManager {
         return .{ .ref = ref };
@@ -573,16 +583,16 @@ pub const PassManager = struct {
     }
 
     pub fn create() PassManager {
-        return .toZig(llvm.core.LLVMCreatePassManager());
+        return .toZig(cllvm.core.LLVMCreatePassManager());
     }
 
     pub fn run(pm: PassManager, module: Module) void {
-        _ = llvm.core.LLVMRunPassManager(pm.toC(), module.toC());
+        _ = cllvm.core.LLVMRunPassManager(pm.toC(), module.toC());
     }
 };
 
 pub const OrcLLJitBuilder = struct {
-    ref: llvm.types.LLVMOrcLLJITBuilderRef,
+    ref: cllvm.types.LLVMOrcLLJITBuilderRef,
 
     pub fn toZig(ref: types.LLVMOrcLLJITBuilderRef) OrcLLJitBuilder {
         return .{ .ref = ref };
@@ -602,7 +612,7 @@ pub const OrcLLJitBuilder = struct {
 };
 
 pub const OrcLLJit = struct {
-    ref: llvm.types.LLVMOrcLLJITRef,
+    ref: cllvm.types.LLVMOrcLLJITRef,
 
     pub fn toZig(ref: types.LLVMOrcLLJITRef) OrcLLJit {
         return .{ .ref = ref };
@@ -628,18 +638,30 @@ pub fn linkInMCJIT() void {
 }
 
 pub const ExecutionEngine = struct {
-    ref: llvm.types.LLVMExecutionEngineRef,
+    ref: cllvm.types.LLVMExecutionEngineRef,
 
-    pub fn toZig(ref: llvm.types.LLVMExecutionEngineRef) ExecutionEngine {
+    pub fn toZig(ref: cllvm.types.LLVMExecutionEngineRef) ExecutionEngine {
         return .{ .ref = ref };
     }
 
-    pub fn toC(t: ExecutionEngine) llvm.types.LLVMExecutionEngineRef {
+    pub fn toC(t: ExecutionEngine) cllvm.types.LLVMExecutionEngineRef {
         return t.ref;
     }
 
+    pub fn runStaticConstructors(t: ExecutionEngine) void {
+        engine.LLVMRunStaticConstructors(t.toC());
+    }
+
+    pub fn createMCJITForModule(mod: Module) Error!ExecutionEngine {
+        var ref: cllvm.types.LLVMExecutionEngineRef = undefined;
+        if (engine.LLVMCreateMCJITCompilerForModule(&ref, mod.toC(), null, 0, null) != 0) {
+            return Error.CouldNotCreateExecutionEngine;
+        }
+        return .toZig(ref);
+    }
+
     pub fn createForModule(mod: Module) Error!ExecutionEngine {
-        var ref: llvm.types.LLVMExecutionEngineRef = undefined;
+        var ref: cllvm.types.LLVMExecutionEngineRef = undefined;
         if (engine.LLVMCreateExecutionEngineForModule(&ref, mod.toC(), null) != 0) {
             return Error.CouldNotCreateExecutionEngine;
         }
@@ -647,8 +669,8 @@ pub const ExecutionEngine = struct {
     }
 
     pub fn findFunction(exec: ExecutionEngine, name: [:0]const u8) Function {
-        var fun: llvm.types.LLVMValueRef = undefined;
-        if (engine.LLVMFindFunction(exec.toC(), name, &fun) == 1) {
+        var fun: cllvm.types.LLVMValueRef = undefined;
+        if (engine.LLVMFindFunction(exec.toC(), name, &fun) != 0) {
             @panic("error");
         }
         return .toZig(fun);
@@ -660,7 +682,7 @@ pub const ExecutionEngine = struct {
 };
 
 pub const Context = struct {
-    ref: llvm.types.LLVMContextRef,
+    ref: cllvm.types.LLVMContextRef,
 
     pub fn toZig(ref: types.LLVMContextRef) Context {
         return .{ .ref = ref };
