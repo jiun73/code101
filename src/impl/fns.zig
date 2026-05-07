@@ -4,7 +4,7 @@ const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
 
 pub fn matchConstTokens(comptime const_tokens: []const []const u8) SyntaxTreeNode.MatchFn {
     const Ret = struct {
-        fn f(tokens: [][]const u8) SyntaxTreeNode.MatchFnRet {
+        fn f(tokens: []const []const u8) SyntaxTreeNode.MatchFnRet {
             if (tokens.len < const_tokens.len) return .{ .false = .outOfTokens };
             for (const_tokens, 0..) |const_token, i| {
                 log.print("{s}[{s}] ", .{ tokens[i], const_token }, .MatchingVerbose);
@@ -84,6 +84,8 @@ pub fn eql(comptime fmt: []const u8) []const (*const SyntaxTreeNode.MatchFn) {
                     fns = fns ++ .{single(sectionLabel)};
                 } else if (std.mem.eql(u8, control, "int")) {
                     fns = fns ++ .{single(integerValue)};
+                } else if (std.mem.eql(u8, control, "step")) {
+                    fns = fns ++ .{single(integerValue)};
                 } else @compileError("invalid fmt");
             } else {
                 run = run ++ token ++ " ";
@@ -109,9 +111,9 @@ pub fn sectionLabel(str: []const u8) bool {
 pub fn stringValue(str: []const u8) bool {
     log.print("{s}[str]", .{str}, .MatchingVerbose);
 
-    var view = std.unicode.Utf8View.init(str) catch @panic("invalid UTF8");
+    var view = std.unicode.Utf8View.init(str) catch @panic("Erreur de format: UTF8 Invalide !");
     var iter = view.iterator();
-    const count = std.unicode.utf8CountCodepoints(str) catch @panic("invalid UTF8");
+    const count = std.unicode.utf8CountCodepoints(str) catch @panic("Erreur de format: UTF8 Invalide !");
 
     if (count == 0) return false;
 
@@ -136,6 +138,13 @@ pub fn stringValue(str: []const u8) bool {
 
 pub fn variableName(str: []const u8) bool {
     return (str.len == 1) and (std.mem.indexOfScalar(u8, "0123456789", str[0]) == null);
+}
+
+pub fn step(str: []const u8) bool {
+    for (str) |c| {
+        if (std.mem.indexOfScalar(u8, "0123456789", c) == null) return false;
+    }
+    return true;
 }
 
 pub fn integerValue(str: []const u8) bool {

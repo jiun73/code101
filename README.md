@@ -4,4 +4,4 @@ Ceci est un projet créé dans le cadre du cours Veille Technologique pour le c�
 
 Dépendances
 
-Clang-19 et LLVM
+espeak-ng, Clang-20 et LLVM-20

@@ -1,13 +1,16 @@
 const std = @import("std");
 const log = @import("log.zig");
 const zllvm = @import("zllvm");
+const ScopeStack = @import("ScopeStack.zig");
 
 const Builder = @This();
 
 pub const Value = zllvm.Value;
+pub const Function = zllvm.Function;
 pub const Ref = []const u8;
 
 pub const DataType = enum {
+    Void,
     Int,
     Real,
     String,
@@ -15,6 +18,7 @@ pub const DataType = enum {
 
     pub fn toLLVM(ty: DataType) zllvm.Type {
         switch (ty) {
+            .Void => return .Void(),
             .Int => return .Int32(),
             .Real => return .Double(),
             .String => return zllvm.Type.Int8().Ptr(),
@@ -25,11 +29,13 @@ pub const DataType = enum {
 pub const Param = struct { name: []const u8, ty: DataType };
 pub const FunctionDefinition = struct {
     params: []Param,
-    returnType: ?DataType = null,
+    returnType: DataType = .Void,
     name: []const u8,
 
     pub fn findParamIndex(def: FunctionDefinition, name: []const u8) ?usize {
+        std.debug.print("{}\n", .{def.params.len});
         for (def.params, 0..) |param, i| {
+            std.debug.print("param {}: {s}\n", .{ param, param.name });
             if (std.mem.eql(u8, param.name, name)) return i;
         }
         return null;
@@ -49,41 +55,9 @@ pub const FunctionDefinition = struct {
     }
 };
 
-pub const ValueRef = union(enum) {
-    value: Value,
-    ref: Ref,
-
-    pub fn getValue(vr: ValueRef, b: *Builder) Error!Value {
-        switch (vr) {
-            .value => |val| return val,
-            .ref => |ref| return try b.getVar(ref),
-        }
-    }
-
-    pub fn getRef(vr: ValueRef) Ref {
-        switch (vr) {
-            .ref => |ref| return ref,
-            else => @panic("trying to cast value to ref"),
-        }
-    }
-
-    pub fn print(vr: ValueRef, comptime logty: log.LogTy) void {
-        switch (vr) {
-            .ref => |ref| log.print("[{s}]", .{ref}, logty),
-            .value => |val| log.print("[{x}]", .{@intFromPtr(val.ref)}, logty),
-        }
-    }
-};
-
-pub const Error = error{VariableNotDeclared};
-
-const SavedVar = struct { value: Value, mustLoad: bool = false };
-
 module: zllvm.Module,
 ir: zllvm.Builder,
-vars: std.StringHashMap(SavedVar),
-fns: std.StringHashMap(zllvm.Function),
-fndefs: std.StringHashMap(FunctionDefinition),
+scopes: ScopeStack,
 
 printfFn: zllvm.Function,
 sqrtFn: zllvm.Function,
@@ -119,9 +93,10 @@ pub fn init(gpa: std.mem.Allocator, module: zllvm.Module) Builder {
     const fmt_s = zllvm.Value.constString("%s\n", false);
     const fmt_s_val = module.addGlobal(fmt_s.getType(), "fmt_s").setInitializer(fmt_s).setGlobalConstant(true).setLinkage(.LLVMInternalLinkage).setUnnamedAddr(true);
 
-    const vars = std.StringHashMap(SavedVar).init(gpa);
-    const fns = std.StringHashMap(zllvm.Function).init(gpa);
-    const fndefs = std.StringHashMap(FunctionDefinition).init(gpa);
+    const st = ScopeStack.init(gpa);
+    // const vars = std.StringHashMap(SavedVar).init(gpa);
+    // const fns = std.StringHashMap(zllvm.Function).init(gpa);
+    // const fndefs = std.StringHashMap(FunctionDefinition).init(gpa);
 
     return .{
         .printfFn = printfFn,
@@ -129,14 +104,15 @@ pub fn init(gpa: std.mem.Allocator, module: zllvm.Module) Builder {
         .powFn = powFn,
         .sqrtFn = sqrtFn,
         .askFn = askFn,
-        .vars = vars,
+        //.vars = vars,
         .module = module,
         .ir = builder,
         .fmtD = fmt_d_val,
         .fmtS = fmt_s_val,
         .fmtB = fmt_b_val,
-        .fns = fns,
-        .fndefs = fndefs,
+        //.fns = fns,
+        //.fndefs = fndefs,
+        .scopes = st,
         .sayDbFn = sayDbFn,
         .sayFn = sayFn,
         .sleepFn = sleepFn,
@@ -144,40 +120,28 @@ pub fn init(gpa: std.mem.Allocator, module: zllvm.Module) Builder {
 }
 
 pub fn deinit(b: *Builder, gpa: std.mem.Allocator) void {
-    b.vars.deinit();
-    b.fns.deinit();
-    var iter = b.fndefs.iterator();
-    while (iter.next()) |def| {
-        def.value_ptr.dealloc(gpa);
-    }
-    b.fndefs.deinit();
+    b.scopes.deinit(gpa);
     b.ir.dispose();
 }
 
-pub fn getVar(b: *Builder, var_name: []const u8) Error!Value {
-    const v = b.vars.get(var_name) orelse {
-        log.println("Variable '{s}' not found", .{var_name}, .Building);
-        return Error.VariableNotDeclared;
-    };
+pub fn getVariableValue(b: *Builder, var_name: []const u8) !Value {
+    const record = try b.scopes.getVariableRecord(var_name);
 
-    if (v.mustLoad) {
-        return b.load(v.value);
+    if (record.isPointerToValue) {
+        return b.load(record.value);
     }
 
-    return v.value;
+    return record.value;
+
+    // const v = b.vars.get(var_name) orelse {
+    //     log.println("Variable '{s}' not found", .{var_name}, .Building);
+    //     return Error.VariableNotDeclared;
+    // };
 }
 
-pub fn setVar(b: *Builder, var_name: []const u8, value: Value) void {
-    b.vars.put(var_name, .{ .value = value }) catch @panic("OOM");
-}
-
-pub fn setVarPtr(b: *Builder, var_name: []const u8, value: Value) void {
-    b.vars.put(var_name, .{ .value = value, .mustLoad = true }) catch @panic("OOM");
-}
-
-pub fn store(b: *Builder, LHS: Ref, RHS: Value) Error!Value {
+pub fn store(b: *Builder, LHS: Ref, RHS: Value) !Value {
     log.println("store", .{}, .Building);
-    return b.ir.store(RHS, try b.getVar(LHS));
+    return b.ir.store(RHS, try b.getVariableValue(LHS));
 }
 
 pub fn rem(b: *Builder, LHS: Value, RHS: Value) Value {
@@ -195,8 +159,8 @@ pub fn mul(b: *Builder, LHS: Value, RHS: Value) Value {
     return b.ir.fmul(LHS, RHS, "");
 }
 
-pub fn mulEq(b: *Builder, LHS: Ref, RHS: Value) Error!void {
-    const v = try b.getVar(LHS);
+pub fn mulEq(b: *Builder, LHS: Ref, RHS: Value) !void {
+    const v = try b.getVariableValue(LHS);
     const result = b.ir.fmul(v, try RHS.getValue(b), "");
     b.setVar(LHS, result);
     log.println("mulEq", .{}, .Building);
@@ -281,8 +245,8 @@ pub fn setLoadedVar(b: *Builder, var_name: []const u8, ptr: zllvm.Value) void {
     b.vars.put(var_name, lvar) catch @panic("OOM");
 }
 
-pub fn getAndLoadValue(b: *Builder, var_name: []const u8) Error!zllvm.Value {
-    const ptr = try b.getVar(var_name);
+pub fn getAndLoadValue(b: *Builder, var_name: []const u8) !zllvm.Value {
+    const ptr = try b.getVariableValue(var_name);
     return b.ir.load2(.Double(), ptr, "");
 }
 
@@ -293,18 +257,18 @@ pub fn load(b: *Builder, ptr: Value) Value {
 pub fn declare(b: *Builder, gpa: std.mem.Allocator, var_name: []const u8) Value {
     log.println("declaration", .{}, .Building);
     const ptr = b.ir.allocaDupeZ(.Double(), var_name, gpa);
-    //_ = b.ir.store(value, ptr);
-    b.setVarPtr(var_name, ptr);
+    b.scopes.getCurrentScope().setVariableValuePtr(var_name, ptr);
     return ptr;
 }
 
-pub fn main(b: *Builder) !void {
+pub fn defineMain(b: *Builder) !void {
     const fun = b.module.addFn("main", .create(zllvm.Type.Int32(), &.{ zllvm.Type.Int32(), zllvm.Type.Int8().Ptr().Ptr() }, false));
     const entry = fun.appendBasicBlock("entree");
     b.ir.positionAtEnd(entry);
+    b.scopes.getGlobalScope().setExternalFunction("___main___", fun);
 }
 
-pub fn function(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) void {
+pub fn defineFunction(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) void {
     const name_nt = gpa.dupeZ(u8, def.name) catch @panic("OOM");
     defer gpa.free(name_nt);
 
@@ -317,18 +281,17 @@ pub fn function(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) vo
         paramsLLVM[i] = param.ty.toLLVM();
     }
 
-    const fun = b.module.addFn(name_nt, .create(if (def.returnType) |rt| rt.toLLVM() else zllvm.Type.Void(), paramsLLVM, false));
+    const fun = b.module.addFn(name_nt, .create(def.returnType.toLLVM(), paramsLLVM, false));
     const entry = fun.appendBasicBlock("entree");
     b.ir.positionAtEnd(entry);
 
     for (def.params, 0..) |param, i| {
-        const val = fun.getParam(i);
-        b.setVar(param.name, val);
+        const value = fun.getParam(i);
+        b.scopes.getCurrentScope().setVariableValue(param.name, value);
         log.println("param {s}", .{param.name}, .Building);
     }
 
-    b.fns.put(def.name, fun) catch @panic("OOM");
-    b.fndefs.put(def.name, FunctionDefinition.dupe(gpa, def)) catch @panic("OOM");
+    b.scopes.getGlobalScope().setFunction(def, fun);
 }
 
 // pub fn section(b: *Builder, gpa: std.mem.Allocator, name: []const u8) !void {
@@ -343,8 +306,6 @@ pub fn function(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) vo
 // }
 
 pub fn call(b: *Builder, name: []const u8, args: []Value) !Value {
-    log.println("getting fn '{s}'", .{name}, .Building);
-    const fun = b.fns.get(name) orelse @panic("wrong fns");
-
-    return b.ir.call(fun, args, "");
+    const fn_record = try b.scopes.getFunctionRecord(name);
+    return b.ir.call(fn_record.body, args, "");
 }

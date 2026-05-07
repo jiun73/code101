@@ -63,28 +63,28 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const lib = b.addLibrary(.{
-        .name = "code101",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "code101", .module = mod },
-                .{ .name = "zllvm", .module = llvm_bds_mod },
-                .{ .name = "impl", .module = impl_mod },
-                .{ .name = "code101_lib", .module = ir_mod },
-            },
-        }),
-    });
+    // const lib = b.addLibrary(.{
+    //     .name = "code101",
+    //     .root_module = b.createModule(.{
+    //         .root_source_file = b.path("src/main.zig"),
+    //         .target = target,
+    //         .optimize = optimize,
+    //         .imports = &.{
+    //             .{ .name = "code101", .module = mod },
+    //             .{ .name = "zllvm", .module = llvm_bds_mod },
+    //             .{ .name = "impl", .module = impl_mod },
+    //             .{ .name = "code101_lib", .module = ir_mod },
+    //         },
+    //     }),
+    // });
 
-    //std.debug.print("{s}", .{ir_file.generated.file.getPath()});
+    // //std.debug.print("{s}", .{ir_file.generated.file.getPath()});
 
-    const compiler_bc = lib.getEmittedLlvmBc();
+    // const compiler_bc = lib.getEmittedLlvmBc();
 
-    const compiler_mod = b.createModule(.{
-        .root_source_file = compiler_bc,
-    });
+    // const compiler_mod = b.createModule(.{
+    //     .root_source_file = compiler_bc,
+    // });
 
     const exe = b.addExecutable(.{
         .name = "code101",
@@ -97,7 +97,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zllvm", .module = llvm_bds_mod },
                 .{ .name = "impl", .module = impl_mod },
                 .{ .name = "code101_lib", .module = ir_mod },
-                .{ .name = "self", .module = compiler_mod },
+                // .{ .name = "self", .module = compiler_mod },
             },
         }),
     });

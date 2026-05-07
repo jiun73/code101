@@ -20,6 +20,8 @@ declare double @llvm.pow.f64(double) #0
 
 declare void @say(ptr)
 
+declare void @say_double(double)
+
 declare double @read_double(ptr)
 
 declare void @sleep(i32)
@@ -42,8 +44,12 @@ entree:
   %y = alloca double, align 8
   %3 = call double @read_double(ptr @var_name.1)
   store double %3, ptr %y, align 8
-  %4 = call double @"hypot\C3\A9nuse"(ptr %x, ptr %y)
-  %5 = call i8 (ptr, ...) @printf(ptr @fmt_d, double %4)
+  %4 = load double, ptr %x, align 8
+  call void @say_double(double %4)
+  %5 = load double, ptr %x, align 8
+  %6 = load double, ptr %y, align 8
+  %7 = call double @"hypot\C3\A9nuse"(double %5, double %6)
+  %8 = call i8 (ptr, ...) @printf(ptr @fmt_d, double %7)
   ret i32 0
 }
 

@@ -13,7 +13,6 @@ const uni = @import("unicode.util.zig");
 
 const Context = @This();
 const FnOrMain = union(enum) { main: void, fun: Builder.FunctionDefinition };
-const BuildFn = fn (*Context, [][]const u8) anyerror!void;
 
 const CallCollector = struct {
     params: []Builder.Value,
@@ -128,7 +127,6 @@ pub fn printLineError(ctx: *Context, char: *const u8) void {
         std.debug.print(" ", .{});
         c += 1;
     }
-
     std.debug.print("^ ici\n", .{});
 }
 
@@ -167,21 +165,18 @@ pub fn build(ctx: *Context, gpa: std.mem.Allocator, tokens: [][]const u8) !void 
     return nodes.master.traverse(ctx, gpa, tokens);
 }
 
-pub fn buildTTSMessage(ctx: *Context, tokens: [][]const u8) !void {
-    const message = tokens[1];
+pub fn buildTTSMessage(ctx: *Context, message: []const u8) !void {
     const message_nt = ctx.gpa.dupeZ(u8, message[1 .. message.len - 1]) catch @panic("OOM");
     defer ctx.gpa.free(message_nt);
     const str = ctx.builder.ir.globalStringPtr(message_nt, "message");
     ctx.builder.ttsString(str);
 }
 
-pub fn buildTTSMessage2(ctx: *Context, tokens: [][]const u8) !void {
-    const var_name = tokens[4];
-    ctx.builder.ttsDouble(try ctx.builder.getVar(var_name));
+pub fn buildTTSMessage2(ctx: *Context, var_name: []const u8) !void {
+    ctx.builder.ttsDouble(try ctx.builder.getVariableValue(var_name));
 }
 
-pub fn buildAsk(ctx: *Context, tokens: [][]const u8) !void {
-    const var_name = tokens[4];
+pub fn buildAsk(ctx: *Context, var_name: []const u8) !void {
     const var_name_nt = ctx.gpa.dupeZ(u8, var_name[0..var_name.len]) catch @panic("OOM");
     defer ctx.gpa.free(var_name_nt);
     const var_name_str = ctx.builder.ir.globalStringPtr(var_name_nt, "var_name");
@@ -191,25 +186,24 @@ pub fn buildAsk(ctx: *Context, tokens: [][]const u8) !void {
     _ = ctx.builder.ir.store(val, varn);
 }
 
-pub fn buildPrintMessage(ctx: *Context, tokens: [][]const u8) !void {
-    const message = tokens[3];
+pub fn buildPrintMessage(ctx: *Context, message: []const u8) !void {
     const message_nt = ctx.gpa.dupeZ(u8, message[1 .. message.len - 1]) catch @panic("OOM");
     defer ctx.gpa.free(message_nt);
     const str = ctx.builder.ir.globalStringPtr(message_nt, "message");
     ctx.builder.printString(str);
 }
 
-pub fn buildMultiplyEq(ctx: *Context, _: [][]const u8) !void {
+pub fn buildMultiplyEq(ctx: *Context) !void {
     try ctx.builder.mulEq(try ctx.opStack.getDouble(), (try ctx.opStack.getDouble()).getRef());
 }
 
-pub fn buildMultiply(ctx: *Context, _: [][]const u8) !void {
+pub fn buildMultiply(ctx: *Context) !void {
     ctx.opStack.pushOp(ctx.gpa, .Multiply);
     try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
 }
 
-pub fn buildPrintResult(ctx: *Context, _: [][]const u8) !void {
-    const result = try ctx.opStack.pop();
+pub fn buildPrintResult(ctx: *Context) !void {
+    const result = ctx.opStack.get();
 
     switch (result) {
         .bool => |val| ctx.builder.printBool(val),
@@ -221,44 +215,38 @@ pub fn buildPrintResult(ctx: *Context, _: [][]const u8) !void {
     }
 }
 
-pub fn buildPrintVar(ctx: *Context, tokens: [][]const u8) !void {
-    const var_name = tokens[4];
+pub fn buildPrintVar(ctx: *Context, var_name: []const u8) !void {
     const value = try ctx.builder.getAndLoadValue(var_name);
     ctx.builder.printDecimal(value);
 }
 
-pub fn buildVariablePush(ctx: *Context, tokens: [][]const u8) !void {
-    const var_name = tokens[0];
+pub fn buildVariablePush(ctx: *Context, var_name: []const u8) !void {
     log.println("pushing var {s}", .{var_name}, .Building);
     ctx.opStack.pushData(ctx.gpa, .{ .reference = var_name });
 }
 
-pub fn buildConstPush(ctx: *Context, tokens: [][]const u8) !void {
-    const value_str = tokens[0];
+pub fn buildConstPush(ctx: *Context, value_str: []const u8) !void {
     const value_int = std.fmt.parseFloat(f64, value_str) catch @panic("invalid");
     const value = zllvm.Value.constDouble(value_int);
     log.println("pushing const {}", .{value_int}, .Building);
     ctx.opStack.pushData(ctx.gpa, .{ .double = value });
 }
 
-pub fn buildSleep(ctx: *Context, tokens: [][]const u8) !void {
-    const value_str = tokens[1];
+pub fn buildSleep(ctx: *Context, value_str: []const u8) !void {
     const value_int = std.fmt.parseInt(u32, value_str, 10) catch @panic("invalid");
     const value = zllvm.Value.constInt32(value_int);
     ctx.builder.sleep(value);
 }
 
-pub fn buildResultPush(_: *Context, _: [][]const u8) !void {
+pub fn buildResultPush(_: *Context) !void {
     //unreachable;
 }
 
-pub fn buildCopyPush(ctx: *Context, _: [][]const u8) !void {
+pub fn buildCopyPush(ctx: *Context) !void {
     ctx.opStack.pushData(ctx.gpa, ctx.opStack.getLast());
 }
 
-pub fn buildDeclare(ctx: *Context, tokens: [][]const u8) !void {
-    const variable_name = tokens[4];
-
+pub fn buildDeclare(ctx: *Context, variable_name: []const u8) !void {
     ctx.opStack.pushData(ctx.gpa, .{ .label = variable_name });
     _ = try ctx.opStack.doOp(ctx.gpa, &ctx.builder, .{ .memory = .Declare });
 
@@ -273,174 +261,152 @@ pub fn buildDeclare(ctx: *Context, tokens: [][]const u8) !void {
 //     } else @panic("result is null");
 // }
 
-pub fn pushOpFn(comptime op: OpStack.Op) BuildFn {
+pub fn pushOpFn(comptime op: OpStack.Op) SyntaxTreeNode.BuildFnNoTokens {
     const T = struct {
-        pub fn fun(ctx: *Context, _: [][]const u8) !void {
+        pub fn fun(ctx: *Context) !void {
             ctx.opStack.pushOp(ctx.gpa, op);
         }
     };
     return T.fun;
 }
 
-pub fn doOpFn(comptime op: OpStack.Op) BuildFn {
+pub fn doOpFn(comptime op: OpStack.Op) SyntaxTreeNode.BuildFnNoTokens {
     const T = struct {
-        pub fn fun(ctx: *Context, _: [][]const u8) !void {
+        pub fn fun(ctx: *Context) !void {
             _ = try ctx.opStack.doOp(ctx.gpa, &ctx.builder, op);
         }
     };
     return T.fun;
 }
 
-pub fn buildRet(ctx: *Context, _: [][]const u8) !void {
-    const fndef = &(ctx.fndef orelse @panic("TODO"));
+pub fn buildRet(ctx: *Context) !void {
+    const fn_name = try ctx.builder.scopes.getParentFunctionScopeName();
+    log.println("getting function from scope {s}", .{fn_name}, .Building);
+    const fn_record = try ctx.builder.scopes.getFunctionRecord(fn_name);
+    defer ctx.builder.scopes.exitScope(ctx.gpa);
 
-    switch (fndef.*) {
-        .main => {
-            _ = ctx.builder.ir.ret(zllvm.Value.constInt32(0));
-        },
-        .fun => |*fun| {
-            if (fun.returnType == null) {
-                _ = ctx.builder.ir.retvoid();
-            } else {
-                const result = try ctx.opStack.popValue(&ctx.builder);
-
-                _ = ctx.builder.ir.ret(result);
-            }
-        },
+    if (std.mem.eql(u8, fn_name, "___main___")) {
+        _ = ctx.builder.ir.ret(.constInt32(0));
+        return;
     }
 
-    fndef.deinit(ctx.gpa);
-    ctx.fndef = null;
+    if (fn_record.def) |def| {
+        if (def.returnType == .Void) {
+            _ = ctx.builder.ir.retvoid();
+        } else {
+            const result = try ctx.opStack.popValue(&ctx.builder);
+            _ = ctx.builder.ir.ret(result);
+        }
+    } else @panic("Aucune définition de fonction !");
 }
 
-pub fn startExpr(ctx: *Context, _: [][]const u8) !void {
+pub fn startExpr(ctx: *Context) !void {
     ctx.opStack.pushOp(ctx.gpa, .{ .control = .Result });
 }
 
-pub fn endExpr(ctx: *Context, _: [][]const u8) !void {
+pub fn endExpr(ctx: *Context) !void {
     try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
 }
 
-pub fn restartExpr(ctx: *Context, _: [][]const u8) !void {
+pub fn restartExpr(ctx: *Context) !void {
     try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
     ctx.opStack.pushOp(ctx.gpa, .{ .control = .Result });
 }
 
-pub fn buildSection(ctx: *Context, tokens: [][]const u8) !void {
-    const name = tokens[2];
+// pub fn buildSection(ctx: *Context, tokens: [][]const u8) !void {
+//     const name = tokens[2];
 
+//     if (std.mem.eql(u8, name, "principale")) {
+//         try ctx.builder.main();
+//     } else {
+//         const str = name[1 .. name.len - 1];
+//         try ctx.builder.function(ctx.gpa, str);
+//     }
+// }
+
+pub fn startFunctionDefinition(ctx: *Context, name: []const u8) !void {
     if (std.mem.eql(u8, name, "principale")) {
-        try ctx.builder.main();
+        ctx.opStack.pushData(ctx.gpa, .{ .label = "___main___" });
+        ctx.builder.scopes.enterScope(ctx.gpa, .init(ctx.gpa, .{ .function = "___main___" }));
+        //try ctx.opStack.doOp(ctx.gpa, &ctx.builder, .{ .function_def = .DefineMain });
+        //ctx.fndef = .startMain();
     } else {
-        const str = name[1 .. name.len - 1];
-        try ctx.builder.function(ctx.gpa, str);
-    }
-}
+        const fn_name = uni.stripFirstAndLast(name);
 
-pub fn startFunctionDefinition(ctx: *Context, tokens: [][]const u8) !void {
-    const name = tokens[2];
+        ctx.opStack.pushData(ctx.gpa, .{ .label = fn_name });
+        ctx.builder.scopes.enterScope(ctx.gpa, .init(ctx.gpa, .{ .function = fn_name }));
 
-    if (std.mem.eql(u8, name, "principale")) {
-        ctx.fndef = .startMain();
-    } else {
-        const name_tr = uni.stripFirstAndLast(name);
-        ctx.fndef = .start(ctx.gpa, name_tr);
+        //ctx.fndef = .start(ctx.gpa, name_tr);
 
         // const str = name[1 .. name.len - 1];
         // try ctx.builder.section(ctx.gpa, str);
     }
+
+    // if (std.mem.eql(u8, name, "principale")) {
+    //     ctx.fndef = .startMain();
+    // } else {
+    //     const name_tr = uni.stripFirstAndLast(name);
+    //     ctx.fndef = .start(ctx.gpa, name_tr);
+
+    //     // const str = name[1 .. name.len - 1];
+    //     // try ctx.builder.section(ctx.gpa, str);
+    // }
 }
 
-pub fn buildFunctionParam(ctx: *Context, tokens: [][]const u8) !void {
-    const name = tokens[0];
-    const fndef = &(ctx.fndef orelse @panic("Tentative d'ajouter un paramètre de fonction alors que nous ne sommes pas en train de définir une fonction"));
+pub fn buildFunctionParam(ctx: *Context, name: []const u8) !void {
+    ctx.opStack.pushData(ctx.gpa, .{ .label = name });
 
-    switch (fndef.*) {
-        .fun => |*fun| {
-            fun.params.append(ctx.gpa, .{ .name = name, .ty = .Real }) catch @panic("OOM");
-            log.println("function param '{s}'", .{name}, .Building);
-        },
-        else => unreachable,
-    }
+    // const fndef = &(ctx.fndef orelse @panic("Tentative d'ajouter un paramètre de fonction alors que nous ne sommes pas en train de définir une fonction"));
+
+    // switch (fndef.*) {
+    //     .fun => |*fun| {
+    //         fun.params.append(ctx.gpa, .{ .name = name, .ty = .Real }) catch @panic("OOM");
+    //         log.println("function param '{s}'", .{name}, .Building);
+    //     },
+    //     else => unreachable,
+    // }
 }
 
-pub fn buildFunctionResult(ctx: *Context, _: [][]const u8) !void {
-    const fndef = &(ctx.fndef orelse @panic("Tentative d'ajouter un paramètre de fonction alors que nous ne sommes pas en train de définir une fonction"));
+pub fn buildFunctionResult(_: *Context, _: [][]const u8) !void {
+    // const fndef = &(ctx.fndef orelse @panic("Tentative d'ajouter un paramètre de fonction alors que nous ne sommes pas en train de définir une fonction"));
 
-    switch (fndef.*) {
-        .fun => |*fun| {
-            const ty = ctx.typeStack.pop() orelse @panic("TODO");
-            fun.returnType = ty;
-            log.println("function return '{}'", .{ty}, .Building);
-        },
-        else => unreachable,
-    }
+    // switch (fndef.*) {
+    //     .fun => |*fun| {
+    //         const ty = ctx.typeStack.pop() orelse @panic("TODO");
+    //         fun.returnType = ty;
+    //         log.println("function return '{}'", .{ty}, .Building);
+    //     },
+    //     else => unreachable,
+    // }
 }
 
 pub const FunctionError = error{ERROR};
 
-pub fn buildFunction(ctx: *Context, _: [][]const u8) !void {
-    const fndef = &(ctx.fndef orelse @panic("Tentative de contruire une fonction sans la définir"));
-
-    switch (fndef.*) {
-        .main => try ctx.builder.main(),
-        .fun => |*fun| {
-            ctx.builder.function(ctx.gpa, fun.toBuilderDef());
-            log.println("build function '{s}'", .{fun.name}, .Building);
-        },
-    }
+pub fn buildFunction(ctx: *Context) !void {
+    try ctx.opStack.doOp(ctx.gpa, &ctx.builder, .{ .function_def = .DefineFunction });
 }
 
-pub fn buildCall(ctx: *Context, _: [][]const u8) !void {
-    var callCollector = &(ctx.callCollector orelse @panic("call collector not initialized"));
-    const name = callCollector.name;
-    const value = try ctx.builder.call(name, callCollector.params);
-
-    switch (value.getType().getKind()) {
-        .LLVMVoidTypeKind => {},
-        .LLVMDoubleTypeKind => ctx.opStack.pushData(ctx.gpa, .{ .double = value }),
-        else => unreachable,
-    }
-
-    callCollector.deinit(ctx.gpa);
-    ctx.callCollector = null;
+pub fn buildCall(ctx: *Context) !void {
+    try ctx.opStack.doOp(ctx.gpa, &ctx.builder, .{ .call = .Call });
 }
 
-pub fn startBuildCall(ctx: *Context, tokens: [][]const u8) !void {
-    const name = tokens[6];
-    const str = uni.stripFirstAndLast(name);
-
-    const fun = ctx.builder.fndefs.get(str) orelse @panic("TODO");
-
-    ctx.callCollector = .start(ctx.gpa, str, fun);
-
-    // const value = try ctx.builder.call(str);
-
-    // if (value.getType().getKind() != .LLVMVoidTypeKind) {
-    //     log.println("result is not void", .{}, .Building);
-    //     ctx.opStack.result = value;
-    // } else log.println("result is void", .{}, .Building);
+pub fn startBuildCall(ctx: *Context, name: []const u8) !void {
+    const fn_name = uni.stripFirstAndLast(name);
+    ctx.opStack.pushData(ctx.gpa, .{ .label = fn_name });
 }
 
-pub fn buildCallParams(ctx: *Context, tokens: []const []const u8) !void {
-    const name = tokens[0];
-    var callCollector = &(ctx.callCollector orelse @panic("call collector not initialized"));
-    const index = callCollector.fndef.findParamIndex(name) orelse @panic("param not found");
-    callCollector.paramCursor = index;
-    log.println("setting arg {}", .{index}, .Building);
+pub fn buildCallParams(ctx: *Context, name: []const u8) !void {
+    ctx.opStack.pushData(ctx.gpa, .{ .reference = name });
 }
 
-pub fn buildCallParamValue(ctx: *Context, _: []const []const u8) !void {
-    const callCollector = ctx.callCollector orelse @panic("call collector not initialized");
-    const index = callCollector.paramCursor orelse @panic("cursor not set");
-    callCollector.params[index] = try ctx.opStack.popValue(&ctx.builder);
-    log.println("setting value {}", .{index}, .Building);
+pub fn buildCallParamValue(ctx: *Context) !void {
+    try ctx.opStack.doOp(ctx.gpa, &ctx.builder, .{ .call = .PromoteRefToArg });
 }
 
-pub fn pushType(comptime ty: Builder.DataType) BuildFn {
+pub fn pushType(comptime ty: Builder.DataType) SyntaxTreeNode.BuildFnNoTokens {
     const T = struct {
-        pub fn fun(ctx: *Context, _: [][]const u8) !void {
-            try ctx.typeStack.append(ctx.gpa, ty);
+        pub fn fun(ctx: *Context) !void {
+            ctx.opStack.pushData(ctx.gpa, .{ .type = ty });
         }
     };
     return T.fun;

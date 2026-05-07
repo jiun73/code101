@@ -2,14 +2,25 @@ const std = @import("std");
 const log = @import("log.zig");
 const Builder = @import("Builder.zig");
 
+// L'opstack à comme tâche d'effectuer les opérations qui doivent se faire sur pluieurs nodes
+// ex: définition d'une fonction, résolution d'expression
+// c'est le truc le plus proche que j'ai d'un AST
+
 pub const OpStack = @This();
+
+pub const Argument = struct {
+    name: []const u8,
+    value: Builder.Value,
+};
 
 pub const Data = union(enum) {
     label: []const u8,
     double: Builder.Value,
     bool: Builder.Value,
     reference: Builder.Ref,
-    function: struct {},
+    argument: Argument,
+    argument_def: Builder.Param,
+    //function_def: Builder.FunctionDefinition,
     type: Builder.DataType,
 
     pub fn asRef(data: Data) !Builder.Ref {
@@ -19,10 +30,25 @@ pub const Data = union(enum) {
         }
     }
 
+    pub fn asArgument(data: Data, builder: *Builder) !Argument {
+        switch (data) {
+            .argument => |v| return v,
+            .reference => |ref| return .{ .name = ref, .value = try builder.getVariableValue(ref) },
+            else => return Error.InvalidDataType,
+        }
+    }
+
     pub fn asDouble(data: Data, builder: *Builder) !Builder.Value {
         switch (data) {
             .double => |v| return v,
-            .reference => |ref| return try builder.getVar(ref),
+            .reference => |ref| return try builder.getVariableValue(ref),
+            else => return Error.InvalidDataType,
+        }
+    }
+
+    pub fn asType(data: Data) !Builder.DataType {
+        switch (data) {
+            .type => |v| return v,
             else => return Error.InvalidDataType,
         }
     }
@@ -38,7 +64,7 @@ pub const Data = union(enum) {
         switch (data) {
             .bool => |v| return v,
             .double => |v| return v,
-            .reference => |ref| return try builder.getVar(ref),
+            .reference => |ref| return try builder.getVariableValue(ref),
             else => return Error.InvalidDataType,
         }
     }
@@ -50,7 +76,11 @@ pub const Data = union(enum) {
             .bool => |v| return log.print("bool[{x}]", .{@intFromPtr(v.ref)}, logty),
             .double => |v| return log.print("double[{x}]", .{@intFromPtr(v.ref)}, logty),
             .reference => |ref| return log.print("ref[{s}]", .{ref}, logty),
-            else => return log.print("[?]", .{}, logty),
+            .label => |ref| return log.print("lbl[{s}]", .{ref}, logty),
+            .argument => |arg| return log.print("arg[{s}:{x}]", .{ arg.name, @intFromPtr(arg.value.ref) }, logty),
+            .argument_def => |arg| return log.print("arg[{s}{}]", .{ arg.name, arg.ty }, logty),
+            .type => |ty| return log.print("type[{}]", .{ty}, logty),
+            //else => return log.print("[?]", .{}, logty),
         }
     }
 };
@@ -83,16 +113,17 @@ pub const Op = union(enum) {
         Store,
     },
     call: enum {
-        StartCall,
-        SetArgument,
+        Call, //expects: [label][args...]
+        PromoteRefToArg, //expects: [ref][value] -> [arg]
     },
-    functionDefinition: enum {
-        StartFunctionDef,
-        PushArgumentDef,
-        SetResultType,
+    function_def: enum {
+        DefineFunction, // expects: [label][args_def...][?type]
+        PromoteToArgDef, // expects: [label][type] -> [arg_def]
     },
 };
 
+//deux stacks fonctionnent un peut comme la notation polonaise inverse
+//sauf qu'il y a un stack pour les données et un autre pour les opérateurs
 dataStack: std.ArrayList(Data),
 opStack: std.ArrayList(Op),
 
@@ -105,8 +136,8 @@ pub const Error = error{
 };
 
 pub fn init(gpa: std.mem.Allocator) OpStack {
-    const varStack = std.ArrayList(Data).initCapacity(gpa, 32) catch @panic("OOM");
-    const opStack = std.ArrayList(Op).initCapacity(gpa, 32) catch @panic("OOM");
+    const varStack = std.ArrayList(Data).initCapacity(gpa, 32) catch @panic("PDM");
+    const opStack = std.ArrayList(Op).initCapacity(gpa, 32) catch @panic("PDM");
 
     return .{
         .opStack = opStack,
@@ -142,12 +173,20 @@ pub fn printstack(self: *OpStack) void {
 }
 
 pub fn pushData(self: *OpStack, gpa: std.mem.Allocator, data: Data) void {
-    self.dataStack.append(gpa, data) catch @panic("OOM");
+    self.dataStack.append(gpa, data) catch @panic("PDM");
     self.printstack();
 }
 
 pub fn pop(self: *OpStack) !Data {
     return self.dataStack.pop() orelse return Error.OutOfValues;
+}
+
+pub fn get(self: *OpStack) Data {
+    return self.dataStack.items[self.dataStack.items.len - 1];
+}
+
+pub fn remove(self: *OpStack, n: usize) void {
+    self.dataStack.items.len = self.dataStack.items.len - n;
 }
 
 pub fn popLabel(self: *OpStack) ![]const u8 {
@@ -162,16 +201,27 @@ pub fn popValue(self: *OpStack, b: *Builder) !Builder.Value {
     return (try self.pop()).asValue(b);
 }
 
+pub fn popType(self: *OpStack) !Builder.DataType {
+    return (try self.pop()).asType();
+}
+
 pub fn popDouble(self: *OpStack, b: *Builder) !Builder.Value {
     return (try self.pop()).asDouble(b);
 }
 
-pub fn getLast(self: *OpStack) Builder.ValueRef {
-    return self.dataStack.items[self.dataStack.items.len - 1];
+pub fn getUntil(self: *OpStack, tag: std.meta.Tag(Data)) []Data {
+    var i: usize = self.dataStack.items.len;
+    while (i > 0) {
+        i -= 1;
+
+        const data = self.dataStack.items[i];
+        if (std.meta.activeTag(data) == tag) return self.dataStack.items[i..];
+    }
+    @panic("Erreur interne: Stopper introuvable");
 }
 
 pub fn pushOp(self: *OpStack, gpa: std.mem.Allocator, op: Op) void {
-    self.opStack.append(gpa, op) catch @panic("OOM");
+    self.opStack.append(gpa, op) catch @panic("PDM");
 }
 
 pub fn doOpSwitch(self: *OpStack, gpa: std.mem.Allocator, builder: *Builder, op: Op) !?Data {
@@ -218,8 +268,43 @@ pub fn doOpSwitch(self: *OpStack, gpa: std.mem.Allocator, builder: *Builder, op:
             return .{ .bool = result };
         },
         .call => |c_op| switch (c_op) {
-            .StartCall => {},
-            .SetArgument => {},
+            .Call => {
+                var range = self.getUntil(.label);
+                defer self.remove(range.len);
+
+                const fn_name = try range[0].asLabel();
+                const args_range = range[1..];
+
+                const fn_record = try builder.scopes.getFunctionRecord(fn_name);
+                const fn_def = fn_record.def orelse @panic("Erreur: la fonction n'a pas des définition");
+                if (args_range.len != fn_def.params.len) @panic("Erreur de syntaxe: Mauvais nombre d'arguments pour la fonction");
+                const values = try gpa.alloc(Builder.Value, args_range.len);
+                var arg_set = try gpa.alloc(bool, args_range.len);
+                defer gpa.free(values);
+                defer gpa.free(arg_set);
+                @memset(arg_set, false);
+
+                for (args_range) |data| {
+                    const arg = try data.asArgument(builder);
+                    const i = fn_def.findParamIndex(arg.name) orelse @panic("Erreur de syntaxe: Argument invalide pour la fonction");
+                    if (arg_set[i]) @panic("Erreur de syntaxe: Duplicata d'argument");
+                    arg_set[i] = true;
+                    values[i] = arg.value;
+                }
+
+                const value = try builder.call(fn_name, values);
+
+                switch (value.getType().getKind()) {
+                    .LLVMVoidTypeKind => {},
+                    .LLVMDoubleTypeKind => return .{ .double = value },
+                    else => @panic("Erreur interne: Type de retour non supporté"),
+                }
+            },
+            .PromoteRefToArg => {
+                const value = try self.popValue(builder);
+                const name = try self.popRef();
+                return .{ .argument = .{ .name = name, .value = value } };
+            },
         },
         .memory => |mem_op| switch (mem_op) {
             .Declare => {
@@ -233,10 +318,48 @@ pub fn doOpSwitch(self: *OpStack, gpa: std.mem.Allocator, builder: *Builder, op:
                 _ = try builder.store(LHS, RHS);
             },
         },
-        .functionDefinition => |fn_op| switch (fn_op) {
-            .StartFunctionDef => {},
-            .PushArgumentDef => {},
-            .SetResultType => {},
+        .function_def => |fn_op| switch (fn_op) {
+            .PromoteToArgDef => {
+                const ty = try self.popType();
+                const name = try self.popLabel();
+                return .{ .argument_def = .{ .ty = ty, .name = name } };
+            },
+            .DefineFunction => {
+                var range = self.getUntil(.label);
+                defer self.remove(range.len);
+
+                const name = try range[0].asLabel();
+
+                if (std.mem.eql(u8, name, "___main___")) {
+                    try builder.defineMain();
+                    return null;
+                }
+
+                var return_type: Builder.DataType = .Void;
+                switch (range[range.len - 1]) {
+                    .type => |ty| {
+                        return_type = ty;
+                        range = range[0 .. range.len - 1];
+                    },
+                    else => {},
+                }
+
+                const arg_range = range[1..];
+
+                var args = gpa.alloc(Builder.Param, arg_range.len) catch @panic("PDM");
+                //defer gpa.free(args);
+
+                for (arg_range, 0..) |value, i| {
+                    switch (value) {
+                        .argument_def => |def| {
+                            args[i] = def;
+                        },
+                        else => @panic("Erreur Interne: Format de définition invalide"),
+                    }
+                }
+
+                builder.defineFunction(gpa, .{ .name = name, .params = args, .returnType = return_type });
+            },
         },
         .control => unreachable,
     }
@@ -248,12 +371,12 @@ pub fn doOp(self: *OpStack, gpa: std.mem.Allocator, builder: *Builder, op: Op) !
     self.pushData(gpa, result);
 }
 
-pub fn resolve(self: *OpStack, gpa: std.mem.Allocator, builder: *Builder) (Error || Builder.Error)!void {
+pub fn resolve(self: *OpStack, gpa: std.mem.Allocator, builder: *Builder) !void {
     while (self.opStack.pop()) |op| {
         switch (op) {
             .control => |c_op| switch (c_op) {
                 .Result => {
-                    log.println("resolved: ", .{}, .Ops);
+                    log.println("résolu: ", .{}, .Ops);
                     self.printstack();
                     return;
                 },
@@ -264,7 +387,7 @@ pub fn resolve(self: *OpStack, gpa: std.mem.Allocator, builder: *Builder) (Error
         try self.doOp(gpa, builder, op);
     }
 
-    log.println("resolved: ", .{}, .Ops);
+    log.println("résolu: ", .{}, .Ops);
     self.printstack();
 }
 
