@@ -6,6 +6,7 @@ const ScopeStack = @import("ScopeStack.zig");
 const Builder = @This();
 
 pub const Value = zllvm.Value;
+pub const Block = zllvm.BasicBlock;
 pub const Function = zllvm.Function;
 pub const Ref = []const u8;
 
@@ -124,6 +125,17 @@ pub fn deinit(b: *Builder, gpa: std.mem.Allocator) void {
     b.ir.dispose();
 }
 
+pub fn getVariableRaw(b: *Builder, var_name: []const u8) !Value {
+    const record = try b.scopes.getVariableRecord(var_name);
+
+    return record.value;
+
+    // const v = b.vars.get(var_name) orelse {
+    //     log.println("Variable '{s}' not found", .{var_name}, .Building);
+    //     return Error.VariableNotDeclared;
+    // };
+}
+
 pub fn getVariableValue(b: *Builder, var_name: []const u8) !Value {
     const record = try b.scopes.getVariableRecord(var_name);
 
@@ -141,7 +153,7 @@ pub fn getVariableValue(b: *Builder, var_name: []const u8) !Value {
 
 pub fn store(b: *Builder, LHS: Ref, RHS: Value) !Value {
     log.println("store", .{}, .Building);
-    return b.ir.store(RHS, try b.getVariableValue(LHS));
+    return b.ir.store(RHS, try b.getVariableRaw(LHS));
 }
 
 pub fn rem(b: *Builder, LHS: Value, RHS: Value) Value {
@@ -261,11 +273,12 @@ pub fn declare(b: *Builder, gpa: std.mem.Allocator, var_name: []const u8) Value 
     return ptr;
 }
 
-pub fn defineMain(b: *Builder) !void {
+pub fn defineMain(b: *Builder, gpa: std.mem.Allocator) !void {
     const fun = b.module.addFn("main", .create(zllvm.Type.Int32(), &.{ zllvm.Type.Int32(), zllvm.Type.Int8().Ptr().Ptr() }, false));
     const entry = fun.appendBasicBlock("entree");
     b.ir.positionAtEnd(entry);
     b.scopes.getGlobalScope().setExternalFunction("___main___", fun);
+    b.scopes.enterScope(gpa, .init(gpa, .{ .block = entry }));
 }
 
 pub fn defineFunction(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefinition) void {
@@ -292,6 +305,7 @@ pub fn defineFunction(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefiniti
     }
 
     b.scopes.getGlobalScope().setFunction(def, fun);
+    b.scopes.enterScope(gpa, .init(gpa, .{ .block = entry }));
 }
 
 // pub fn section(b: *Builder, gpa: std.mem.Allocator, name: []const u8) !void {
@@ -308,4 +322,34 @@ pub fn defineFunction(b: *Builder, gpa: std.mem.Allocator, def: FunctionDefiniti
 pub fn call(b: *Builder, name: []const u8, args: []Value) !Value {
     const fn_record = try b.scopes.getFunctionRecord(name);
     return b.ir.call(fn_record.body, args, "");
+}
+
+pub fn cond(b: *Builder, gpa: std.mem.Allocator, condition: Value) !void {
+    const fn_name = try b.scopes.getParentFunctionScopeName();
+    const record = try b.scopes.getFunctionRecord(fn_name);
+    const fun = record.body;
+    const true_block = fun.appendBasicBlock("true");
+    const false_block = fun.appendBasicBlock("false");
+    const then_block = fun.appendBasicBlock("then");
+    _ = b.ir.condBr(condition, true_block, false_block);
+    b.ir.positionAtEnd(true_block);
+
+    b.scopes.getCurrentScope().nextBlock = then_block;
+    b.scopes.enterScope(gpa, .init(gpa, .{ .block = true_block }));
+    b.scopes.getCurrentScope().elseBlock = false_block;
+}
+
+pub fn br(b: *Builder, gpa: std.mem.Allocator, condition: Value) !void {
+    const fn_name = try b.scopes.getParentFunctionScopeName();
+    const record = try b.scopes.getFunctionRecord(fn_name);
+    const fun = record.body;
+    const true_block = fun.appendBasicBlock("true");
+    const false_block = fun.appendBasicBlock("false");
+    const then_block = fun.appendBasicBlock("then");
+    _ = b.ir.condBr(condition, true_block, false_block);
+    b.ir.positionAtEnd(true_block);
+
+    b.scopes.getCurrentScope().nextBlock = then_block;
+    b.scopes.enterScope(gpa, .init(gpa, .{ .block = true_block }));
+    b.scopes.getCurrentScope().elseBlock = false_block;
 }

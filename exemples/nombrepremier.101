@@ -3,13 +3,13 @@
 Prérequis:
 - x, un nombre réel;
 Résultat:
-vrai ou faux;
+vrai ou faux.
 
 Étape 1:
     si x est égal à 0 ou x est égal à 1 alors le résultat est faux, sinon déclarez un entier n égal à 2.
 
 Étape 2:
-    si le reste de la division de x par n n'est pas égal à 0 alors incrémenter n et recommencer l'étape 2,
+    si le reste de la division de x par n n'est pas égal à 0 alors incrémenter n et recommencer l'étape,
     sauf si la racine carré de x est plus petit ou égal à n dans ce cas le résultat est vrai,
     sinon le résultat est faux.
 

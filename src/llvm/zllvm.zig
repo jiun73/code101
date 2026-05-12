@@ -239,6 +239,10 @@ pub const Function = struct {
 pub const BasicBlock = struct {
     ref: types.LLVMBasicBlockRef,
 
+    pub fn getTerminator(t: BasicBlock) Value {
+        return .toZig(core.LLVMGetBasicBlockTerminator(t.toC()));
+    }
+
     pub fn toZig(ref: types.LLVMBasicBlockRef) BasicBlock {
         return .{ .ref = ref };
     }
@@ -477,6 +481,14 @@ pub const Builder = struct {
 
     pub fn retvoid(builder: Builder) Value {
         return .toZig(core.LLVMBuildRetVoid(builder.ref));
+    }
+
+    pub fn br(builder: Builder, dest: BasicBlock) Value {
+        return .toZig(core.LLVMBuildBr(builder.toC(), dest.toC()));
+    }
+
+    pub fn condBr(builder: Builder, c: Value, then: BasicBlock, other: BasicBlock) Value {
+        return .toZig(core.LLVMBuildCondBr(builder.toC(), c.toC(), then.toC(), other.toC()));
     }
 
     pub fn globalStringPtr(builder: Builder, value: [*:0]const u8, name: [*:0]const u8) Value {

@@ -49,7 +49,10 @@ const section_step = SyntaxTreeNode{
     .branches = &.{
         &.{
             .next(
-                .{ .matching = .str("Étape [step] :") },
+                .{
+                    .matching = .str("Étape [step] :"),
+                    .building = .get(Context.startStepBlock, 1),
+                },
             ),
             .exit(),
         },
@@ -60,6 +63,7 @@ const section_step = SyntaxTreeNode{
 };
 
 const paragraph = SyntaxTreeNode{
+    .debug = .label("paragraph"),
     .branches = &.{
         &.{
             .detour(.{
@@ -69,7 +73,7 @@ const paragraph = SyntaxTreeNode{
                     },
                 },
             }),
-            .next(phrase),
+            .next(phrase_full),
             .exit(),
         },
         &.{
@@ -81,15 +85,40 @@ const paragraph = SyntaxTreeNode{
                     },
                 },
             }),
-            .loop(phrase),
+            .err(phrase_full, .loop),
             .exit(),
         },
     },
 };
 
-const phrase = SyntaxTreeNode{
+const phrase_full = SyntaxTreeNode{
+    .debug = .label("phrase_full"),
     .branches = &.{
         &.{
+            .err(phrase, .none),
+            .leaf(phrase_if),
+        },
+    },
+};
+
+const phrase = SyntaxTreeNode{
+    .debug = .label("phrase"),
+    .branches = &.{
+        &.{
+            .next(phrase_nt),
+        },
+        &.{
+            .leaf(.match(".")),
+        },
+    },
+};
+
+const phrase_nt = SyntaxTreeNode{
+    .debug = .label("phrase_nt"),
+    .branches = &.{
+        &.{
+            .leaf(expr_goto),
+            .leaf(expr_restart),
             .next(expr_dire),
             .next(expr_dire_val),
             .next(expr_attendre),
@@ -105,8 +134,40 @@ const phrase = SyntaxTreeNode{
         &.{
             .prev(.match("et")),
             .prev(.match(", puis")),
-            .leaf(.match(".")),
+            .any(),
         },
+    },
+};
+
+const phrase_if = SyntaxTreeNode{
+    .branches = &.{
+        &.{.next(.match("si"))}, &.{.next(conditional)},
+        &.{
+            .build(.ctx(Context.buildCondition), .detour),
+            .next(.match("alors")),
+        },
+        &.{.next(phrase_nt)},
+        &.{
+            .build(.ctx(Context.startElse), .detour),
+            .next(.match(", sinon")),
+        },
+        &.{.next(phrase)},
+        &.{
+            .build(.ctx(Context.goNext), .none),
+        },
+    },
+};
+
+const expr_goto = SyntaxTreeNode{
+    .matching = .str("aller à l'étape [step]"),
+    .building = .get(Context.gotoStep, 3),
+    .branches = &.{},
+};
+
+const expr_restart = SyntaxTreeNode{
+    .matching = .str("recommencer l'étape"),
+    .branches = &.{
+        &.{.build(.ctx(Context.restartBlock), .none)},
     },
 };
 
@@ -155,7 +216,7 @@ const expr_afficher_valeur = SyntaxTreeNode{
 };
 
 const expr_eval_cond = SyntaxTreeNode{
-    .debug = .label("declare"),
+    .debug = .label("eval"),
     .matching = .str("évaluer si"),
     //.buildFn = Context.buildDeclare,
     .branches = &.{
@@ -270,7 +331,7 @@ const conditional = SyntaxTreeNode{
     .building = .ctx(Context.startExpr),
     .branches = &.{
         &.{
-            .next(expression),
+            .err(expression, .{ .next = 0 }),
             .build(.ctx(Context.endExpr), .detour),
             .cancelDefer(),
         },

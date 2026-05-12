@@ -5,9 +5,10 @@ const Builder = @import("Builder.zig");
 pub const ScopeType = union(enum) {
     global: void,
     function: []const u8,
+    block: Builder.Block,
 };
 
-pub const Error = error{ VariableNotDeclared, FunctionNotDefined, NotInFunctionScope };
+pub const Error = error{ StepNotDefined, VariableNotDeclared, FunctionNotDefined, NotInFunctionScope, NotInBlockScope, NoNextBlock };
 
 const VariableValueRecord = struct { value: Builder.Value, isPointerToValue: bool = false };
 const FunctionRecord = struct { body: Builder.Function, def: ?Builder.FunctionDefinition };
@@ -16,11 +17,15 @@ pub const Scope = struct {
     ty: ScopeType,
     vars: std.StringHashMap(VariableValueRecord),
     fns: std.StringHashMap(FunctionRecord),
+    steps: std.StringHashMap(Builder.Block),
+    nextBlock: ?Builder.Block = null,
+    elseBlock: ?Builder.Block = null,
 
     pub fn init(gpa: std.mem.Allocator, ty: ScopeType) Scope {
         const vars = std.StringHashMap(VariableValueRecord).init(gpa);
         const fns = std.StringHashMap(FunctionRecord).init(gpa);
-        return .{ .vars = vars, .fns = fns, .ty = ty };
+        const steps = std.StringHashMap(Builder.Block).init(gpa);
+        return .{ .vars = vars, .fns = fns, .ty = ty, .steps = steps };
     }
 
     pub fn deinit(s: *Scope, gpa: std.mem.Allocator) void {
@@ -34,6 +39,11 @@ pub const Scope = struct {
         }
 
         s.fns.deinit();
+        s.steps.deinit();
+    }
+
+    pub fn setStep(s: *Scope, name: []const u8, step: Builder.Block) void {
+        s.steps.put(name, step) catch @panic("PDM");
     }
 
     pub fn setFunction(s: *Scope, def: Builder.FunctionDefinition, body: Builder.Function) void {
@@ -50,6 +60,10 @@ pub const Scope = struct {
 
     pub fn setVariableValuePtr(s: *Scope, name: []const u8, value: Builder.Value) void {
         s.vars.put(name, .{ .value = value, .isPointerToValue = true }) catch @panic("PDM");
+    }
+
+    pub fn getStep(s: *Scope, name: []const u8) ?Builder.Block {
+        return s.steps.get(name);
     }
 
     pub fn getFunction(s: *Scope, name: []const u8) ?FunctionRecord {
@@ -80,11 +94,13 @@ pub fn deinit(st: *ScopeStack, gpa: std.mem.Allocator) void {
 }
 
 pub fn enterScope(st: *ScopeStack, gpa: std.mem.Allocator, s: Scope) void {
+    log.println("entering scope: {}", .{s.ty}, .Building);
     st.scopes.append(gpa, s) catch @panic("PDM");
 }
 pub fn exitScope(st: *ScopeStack, gpa: std.mem.Allocator) void {
     if (st.scopes.items.len <= 1) @panic("Erreur interne: tentative de partir de la Scope Global");
     var scope = st.scopes.pop() orelse unreachable;
+    log.println("exiting scope: {}", .{scope.ty}, .Building);
     scope.deinit(gpa);
 }
 
@@ -94,6 +110,31 @@ pub fn getGlobalScope(st: ScopeStack) *Scope {
 
 pub fn getCurrentScope(st: ScopeStack) *Scope {
     return &st.scopes.items[st.scopes.items.len - 1];
+}
+
+pub fn getNextBlock(st: ScopeStack) Error!Builder.Block {
+    var i = st.scopes.items.len;
+    while (i > 0) {
+        i -= 1;
+        const scope = st.scopes.items[i];
+        if (scope.nextBlock) |nb| return nb;
+    }
+    return Error.NoNextBlock;
+    //@panic("Erreur Interne: pas de Scope Function trouvé comme parent");
+}
+
+pub fn getParentBlock(st: ScopeStack) Error!Builder.Block {
+    var i = st.scopes.items.len;
+    while (i > 0) {
+        i -= 1;
+        const scope = st.scopes.items[i];
+        switch (scope.ty) {
+            .block => |block| return block,
+            else => continue,
+        }
+    }
+    return Error.NotInBlockScope;
+    //@panic("Erreur Interne: pas de Scope Function trouvé comme parent");
 }
 
 pub fn getParentFunctionScopeName(st: ScopeStack) Error![]const u8 {
@@ -129,4 +170,20 @@ pub fn getFunctionRecord(st: *ScopeStack, name: []const u8) Error!FunctionRecord
     }
     log.println("Could not find function definition: {s}", .{name}, .Building);
     return Error.FunctionNotDefined;
+}
+
+pub fn getParentFunctionRecord(st: *ScopeStack) Error!FunctionRecord {
+    const fn_name = try st.getParentFunctionScopeName();
+    return try st.getFunctionRecord(fn_name);
+}
+
+pub fn getStepRecord(st: *ScopeStack, name: []const u8) Error!Builder.Block {
+    var i = st.scopes.items.len;
+    while (i > 0) {
+        i -= 1;
+        const scope = &st.scopes.items[i];
+        return scope.getStep(name) orelse continue;
+    }
+    log.println("Could not find step definition: {s}", .{name}, .Building);
+    return Error.StepNotDefined;
 }

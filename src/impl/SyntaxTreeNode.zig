@@ -74,18 +74,23 @@ const Action = union(enum) {
     restart: void, //Recommence la node depuis le tout premier groupe
     last: void, //Va au tout dernier groupe
     loop: void, //Recommence le groupe courant à la première branche
-    next: void, //Aller au prochain groupe après avoir retourné de la node
-    prev: void, //Aller au précédent groupe après avoir retourné de la node
+    next: usize, //Aller au prochain groupe après avoir retourné de la node
+    prev: usize, //Aller au précédent groupe après avoir retourné de la node
     detour: void, //Tente de match la node. passe à la prochaine branche si rien n'est match
 };
 
 pub const Branch = struct {
     ptr: *const SyntaxTreeNode = &SyntaxTreeNode{},
     cancelDeferOffset: bool = false,
+    allowError: bool = false,
     afterAction: Action = .none,
 
     pub fn any() Branch {
         return .{ .ptr = &SyntaxTreeNode{} };
+    }
+
+    pub fn err(node: SyntaxTreeNode, action: Action) Branch {
+        return .{ .ptr = &node, .allowError = true, .afterAction = action };
     }
 
     pub fn leaf(node: SyntaxTreeNode) Branch {
@@ -117,7 +122,11 @@ pub const Branch = struct {
     }
 
     pub fn next(node: SyntaxTreeNode) Branch {
-        return .{ .ptr = &node, .afterAction = .next };
+        return .{ .ptr = &node, .afterAction = .{ .next = 0 } };
+    }
+
+    pub fn nextSkip(node: SyntaxTreeNode, n: usize) Branch {
+        return .{ .ptr = &node, .afterAction = .{ .next = n } };
     }
 
     pub fn detour(node: SyntaxTreeNode) Branch {
@@ -125,7 +134,7 @@ pub const Branch = struct {
     }
 
     pub fn prev(node: SyntaxTreeNode) Branch {
-        return .{ .ptr = &node, .afterAction = .prev };
+        return .{ .ptr = &node, .afterAction = .{ .prev = 0 } };
     }
 
     pub fn initA(node: SyntaxTreeNode, after: Action) Branch {
@@ -229,7 +238,7 @@ pub fn isMatch(node: SyntaxTreeNode, tokens: []const []const u8) MatchFnRet {
 
 const StackRef = struct {
     node: *const SyntaxTreeNode,
-    has_matched: bool = false,
+    matched: usize = 0,
     group_i: usize = 0,
     branch_i: usize = std.math.maxInt(usize),
 };
@@ -305,14 +314,14 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
                         previous.branch_i = std.math.maxInt(usize);
                         continue :loop;
                     },
-                    .next => {
-                        previous.group_i += 1;
+                    .next => |n| {
+                        previous.group_i += 1 + n;
                         previous.branch_i = std.math.maxInt(usize);
                         log.println("{}", .{stack.items[stack.items.len - 1].group_i}, .Traversal);
                         continue :loop;
                     },
-                    .prev => {
-                        previous.group_i -= 1;
+                    .prev => |n| {
+                        previous.group_i -= 1 + n;
                         previous.branch_i = std.math.maxInt(usize);
                         log.println("{}", .{stack.items[stack.items.len - 1].group_i}, .Traversal);
                         continue :loop;
@@ -330,7 +339,7 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
 
             switch (result) {
                 .true => |trueval| {
-                    stack.items[stack.items.len - 1].has_matched = true;
+                    stack.items[stack.items.len - 1].matched += 1;
 
                     var consumed_count: usize = 0;
                     switch (trueval) {
@@ -368,13 +377,27 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
             }
         }
 
-        if (!current.has_matched and current.node.matching.fns.len == 0) {
-            _ = stack.pop();
-            tab(stack.items, false);
-            log.println("no match: virtual node, so returning", .{}, .Traversal);
+        if (current.matched == 0 and current.node.matching.fns.len == 0) {
+            if (tokenOffset > 0) log.println("defer cancel on error", .{}, .Traversal);
+            tokenOffset = 0;
+            backtrack: while (true) {
+                tab(stack.items, false);
+                const prev = stack.pop() orelse break;
+                const last = &stack.items[stack.items.len - 1];
+                const branch = last.node.branches[last.group_i][last.branch_i];
+                log.println("no match: virtual node, so returning to {s} ({})", .{ if (last.node.debug) |dgb| dgb.lbl else "?", branch.allowError }, .Traversal);
+                log.println("err:{} action:{} matched:{}", .{ branch.allowError, branch.afterAction, last.matched }, .Traversal);
+                log.println("{}:{}", .{ last.group_i, last.branch_i }, .Traversal);
+                if (branch.afterAction != .detour and !branch.allowError and prev.matched <= 1) {
+                    last.matched = 0;
+                    continue :backtrack;
+                } else break;
+            }
+
             continue :loop;
         }
 
+        std.debug.print("\n\nErreur de compilation!\n", .{});
         ctx.printLineError(@ptrCast(tokens[0].ptr));
         return MatchError.DoesNotMatch;
     }

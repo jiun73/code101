@@ -1,9 +1,5 @@
 --- section principale ---
 
-Étape 1:
-    afficher le message «Bonjour monde !!!».
-
-Étape 2:
-    afficher le message "Bonjour monde !!!".
+demander un nombre réel x. si x est plus grand que 5 alors afficher le message "oui", sinon afficher le message "non". 
 
 --- ---

@@ -14,59 +14,6 @@ const uni = @import("unicode.util.zig");
 const Context = @This();
 const FnOrMain = union(enum) { main: void, fun: Builder.FunctionDefinition };
 
-const CallCollector = struct {
-    params: []Builder.Value,
-    name: []const u8,
-    paramCursor: ?usize = null,
-    fndef: Builder.FunctionDefinition,
-
-    pub fn start(gpa: std.mem.Allocator, name: []const u8, fndef: Builder.FunctionDefinition) CallCollector {
-        const params = gpa.alloc(Builder.Value, fndef.params.len) catch @panic("OOM");
-        return .{ .name = name, .params = params, .fndef = fndef };
-    }
-
-    pub fn deinit(cc: CallCollector, gpa: std.mem.Allocator) void {
-        gpa.free(cc.params);
-    }
-};
-
-const FunctionDefinitionCollectorTy = struct {
-    name: []const u8,
-    params: std.ArrayList(Builder.Param),
-    returnType: ?Builder.DataType = null,
-
-    pub fn toBuilderDef(def: FunctionDefinitionCollectorTy) Builder.FunctionDefinition {
-        return .{
-            .name = def.name,
-            .params = def.params.items,
-            .returnType = def.returnType,
-        };
-    }
-};
-const FunctionDefinitionCollector = union(enum) {
-    main: void,
-    fun: FunctionDefinitionCollectorTy,
-
-    pub fn startMain() FunctionDefinitionCollector {
-        return .main;
-    }
-
-    pub fn start(gpa: std.mem.Allocator, name: []const u8) FunctionDefinitionCollector {
-        const params = std.ArrayList(Builder.Param).initCapacity(gpa, 8) catch @panic("OOM");
-
-        return .{ .fun = .{ .name = name, .params = params } };
-    }
-
-    pub fn deinit(fndef: *FunctionDefinitionCollector, gpa: std.mem.Allocator) void {
-        switch (fndef.*) {
-            .fun => |*fun| {
-                fun.params.deinit(gpa);
-            },
-            else => {},
-        }
-    }
-};
-
 progressNode: std.Progress.Node,
 gpa: std.mem.Allocator,
 counter: u32,
@@ -75,8 +22,6 @@ source: []const u8,
 opStack: OpStack,
 builder: Builder,
 typeStack: std.ArrayList(Builder.DataType),
-fndef: ?FunctionDefinitionCollector = null,
-callCollector: ?CallCollector = null,
 
 pub fn getSliceTo(source: []const u8, char: *const u8) []const u8 {
     const diff = @intFromPtr(char) - @intFromPtr(source.ptr);
@@ -216,7 +161,7 @@ pub fn buildPrintResult(ctx: *Context) !void {
 }
 
 pub fn buildPrintVar(ctx: *Context, var_name: []const u8) !void {
-    const value = try ctx.builder.getAndLoadValue(var_name);
+    const value = try ctx.builder.getVariableValue(var_name);
     ctx.builder.printDecimal(value);
 }
 
@@ -236,8 +181,6 @@ pub fn buildSleep(ctx: *Context, value_str: []const u8) !void {
     const value_int = std.fmt.parseInt(u32, value_str, 10) catch @panic("invalid");
     const value = zllvm.Value.constInt32(value_int);
     ctx.builder.sleep(value);
-
-    
 }
 
 pub fn buildResultPush(_: *Context) !void {
@@ -285,21 +228,27 @@ pub fn buildRet(ctx: *Context) !void {
     const fn_name = try ctx.builder.scopes.getParentFunctionScopeName();
     log.println("getting function from scope {s}", .{fn_name}, .Building);
     const fn_record = try ctx.builder.scopes.getFunctionRecord(fn_name);
-    defer ctx.builder.scopes.exitScope(ctx.gpa);
+    const block = ctx.builder.scopes.getParentBlock() catch return;
+    const term = block.getTerminator();
+    ctx.builder.scopes.exitScope(ctx.gpa); //exit function scope
 
-    if (std.mem.eql(u8, fn_name, "___main___")) {
-        _ = ctx.builder.ir.ret(.constInt32(0));
-        return;
-    }
+    if (term.ref == null) {
+        ctx.builder.scopes.exitScope(ctx.gpa); //exit block scope
 
-    if (fn_record.def) |def| {
-        if (def.returnType == .Void) {
-            _ = ctx.builder.ir.retvoid();
-        } else {
-            const result = try ctx.opStack.popValue(&ctx.builder);
-            _ = ctx.builder.ir.ret(result);
+        if (std.mem.eql(u8, fn_name, "___main___")) {
+            _ = ctx.builder.ir.ret(.constInt32(0));
+            return;
         }
-    } else @panic("Aucune définition de fonction !");
+
+        if (fn_record.def) |def| {
+            if (def.returnType == .Void) {
+                _ = ctx.builder.ir.retvoid();
+            } else {
+                const result = try ctx.opStack.popValue(&ctx.builder);
+                _ = ctx.builder.ir.ret(result);
+            }
+        } else @panic("Aucune définition de fonction !");
+    }
 }
 
 pub fn startExpr(ctx: *Context) !void {
@@ -412,4 +361,59 @@ pub fn pushType(comptime ty: Builder.DataType) SyntaxTreeNode.BuildFnNoTokens {
         }
     };
     return T.fun;
+}
+
+pub fn buildCondition(ctx: *Context) !void {
+    const condition = try ctx.opStack.popBool();
+    try ctx.builder.cond(ctx.gpa, condition);
+}
+
+pub fn startElse(ctx: *Context) !void {
+    const elseBlock = ctx.builder.scopes.getCurrentScope().elseBlock orelse @panic("Sinon invalide!");
+    const thenBlock = try ctx.builder.scopes.getNextBlock();
+    _ = ctx.builder.ir.br(thenBlock);
+    ctx.builder.scopes.exitScope(ctx.gpa);
+    ctx.builder.scopes.enterScope(ctx.gpa, .init(ctx.gpa, .{ .block = elseBlock }));
+    ctx.builder.ir.positionAtEnd(elseBlock);
+}
+
+pub fn goNext(ctx: *Context) !void {
+    const thenBlock = try ctx.builder.scopes.getNextBlock();
+    _ = ctx.builder.ir.br(thenBlock);
+    ctx.builder.scopes.exitScope(ctx.gpa);
+    ctx.builder.scopes.enterScope(ctx.gpa, .init(ctx.gpa, .{ .block = thenBlock }));
+    ctx.builder.ir.positionAtEnd(thenBlock);
+}
+
+pub fn restartBlock(ctx: *Context) !void {
+    const currentBlock = try ctx.builder.scopes.getParentBlock();
+    _ = ctx.builder.ir.br(currentBlock);
+}
+
+pub fn startStepBlock(ctx: *Context, name: []const u8) !void {
+    const name_nt = ctx.gpa.dupeZ(u8, name) catch @panic("OOM");
+    defer ctx.gpa.free(name_nt);
+    const record = try ctx.builder.scopes.getParentFunctionRecord();
+
+    const stepBlock = ctx.builder.scopes.getStepRecord(name) catch record.body.appendBasicBlock(name_nt);
+
+    t: {
+        _ = ctx.builder.scopes.getParentBlock() catch break :t;
+        _ = ctx.builder.ir.br(stepBlock);
+        ctx.builder.scopes.exitScope(ctx.gpa);
+    }
+    ctx.builder.ir.positionAtEnd(stepBlock);
+
+    ctx.builder.scopes.getCurrentScope().setStep(name, stepBlock);
+    ctx.builder.scopes.enterScope(ctx.gpa, .init(ctx.gpa, .{ .block = stepBlock }));
+}
+
+pub fn gotoStep(ctx: *Context, name: []const u8) !void {
+    const name_nt = ctx.gpa.dupeZ(u8, name) catch @panic("OOM");
+    defer ctx.gpa.free(name_nt);
+    const record = try ctx.builder.scopes.getParentFunctionRecord();
+    const stepBlock = ctx.builder.scopes.getStepRecord(name) catch record.body.appendBasicBlock(name_nt);
+    _ = ctx.builder.ir.br(stepBlock);
+    ctx.builder.ir.positionAtEnd(stepBlock);
+    ctx.builder.scopes.exitScope(ctx.gpa);
 }

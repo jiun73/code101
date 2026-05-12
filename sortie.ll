@@ -4,9 +4,7 @@ source_filename = "programme"
 @fmt_b = internal unnamed_addr constant [4 x i8] c"%d\0A\00"
 @fmt_d = internal unnamed_addr constant [6 x i8] c"%.2f\0A\00"
 @fmt_s = internal unnamed_addr constant [4 x i8] c"%s\0A\00"
-@message = private unnamed_addr constant [9 x i8] c"Distance\00", align 1
-@var_name = private unnamed_addr constant [2 x i8] c"x\00", align 1
-@var_name.1 = private unnamed_addr constant [2 x i8] c"y\00", align 1
+@message = private unnamed_addr constant [9 x i8] c"Bonjour!\00", align 1
 
 declare i8 @printf(ptr, ...)
 
@@ -26,30 +24,18 @@ declare double @read_double(ptr)
 
 declare void @sleep(i32)
 
-define double @"hypot\C3\A9nuse"(double %0, double %1) {
+define void @test() {
 entree:
+  br label %"1"
+
+"1":                                              ; preds = %"1", %entree
   call void @say(ptr @message)
-  %2 = fmul double %0, %0
-  %3 = fmul double %1, %1
-  %4 = fadd double %2, %3
-  %5 = call double @llvm.sqrt.f64(double %4)
-  ret double %5
+  br label %"1"
 }
 
 define i32 @main(i32 %0, ptr %1) {
 entree:
-  %x = alloca double, align 8
-  %2 = call double @read_double(ptr @var_name)
-  store double %2, ptr %x, align 8
-  %y = alloca double, align 8
-  %3 = call double @read_double(ptr @var_name.1)
-  store double %3, ptr %y, align 8
-  %4 = load double, ptr %x, align 8
-  call void @say_double(double %4)
-  %5 = load double, ptr %x, align 8
-  %6 = load double, ptr %y, align 8
-  %7 = call double @"hypot\C3\A9nuse"(double %5, double %6)
-  %8 = call i8 (ptr, ...) @printf(ptr @fmt_d, double %7)
+  call void @test()
   ret i32 0
 }
 

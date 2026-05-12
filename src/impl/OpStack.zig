@@ -38,6 +38,13 @@ pub const Data = union(enum) {
         }
     }
 
+    pub fn asBool(data: Data) !Builder.Value {
+        switch (data) {
+            .bool => |v| return v,
+            else => return Error.InvalidDataType,
+        }
+    }
+
     pub fn asDouble(data: Data, builder: *Builder) !Builder.Value {
         switch (data) {
             .double => |v| return v,
@@ -209,6 +216,10 @@ pub fn popDouble(self: *OpStack, b: *Builder) !Builder.Value {
     return (try self.pop()).asDouble(b);
 }
 
+pub fn popBool(self: *OpStack) !Builder.Value {
+    return (try self.pop()).asBool();
+}
+
 pub fn getUntil(self: *OpStack, tag: std.meta.Tag(Data)) []Data {
     var i: usize = self.dataStack.items.len;
     while (i > 0) {
@@ -331,7 +342,7 @@ pub fn doOpSwitch(self: *OpStack, gpa: std.mem.Allocator, builder: *Builder, op:
                 const name = try range[0].asLabel();
 
                 if (std.mem.eql(u8, name, "___main___")) {
-                    try builder.defineMain();
+                    try builder.defineMain(gpa);
                     return null;
                 }
 
