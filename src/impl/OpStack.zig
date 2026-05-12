@@ -115,7 +115,12 @@ pub const Op = union(enum) {
         EqualTo,
         NotEqualTo,
     },
+    bool_ar: enum {
+        And,
+        Or,
+    },
     memory: enum {
+        Increment,
         Declare,
         Store,
     },
@@ -308,6 +313,7 @@ pub fn doOpSwitch(self: *OpStack, gpa: std.mem.Allocator, builder: *Builder, op:
                 switch (value.getType().getKind()) {
                     .LLVMVoidTypeKind => {},
                     .LLVMDoubleTypeKind => return .{ .double = value },
+                    .LLVMIntegerTypeKind => return .{ .bool = value },
                     else => @panic("Erreur interne: Type de retour non supporté"),
                 }
             },
@@ -318,9 +324,13 @@ pub fn doOpSwitch(self: *OpStack, gpa: std.mem.Allocator, builder: *Builder, op:
             },
         },
         .memory => |mem_op| switch (mem_op) {
+            .Increment => {
+                const ref = try self.popRef();
+                _ = try builder.inc(ref);
+            },
             .Declare => {
                 const lbl = try self.popLabel();
-                _ = builder.declare(gpa, lbl);
+                _ = try builder.declare(gpa, lbl);
             },
             .Store => {
                 const RHS = try self.popDouble(builder);
@@ -373,6 +383,17 @@ pub fn doOpSwitch(self: *OpStack, gpa: std.mem.Allocator, builder: *Builder, op:
             },
         },
         .control => unreachable,
+        .bool_ar => |b_op| {
+            const RHS = try self.popBool();
+            const LHS = try self.popBool();
+
+            const result = switch (b_op) {
+                .And => builder.b_and(LHS, RHS),
+                .Or => builder.b_or(LHS, RHS),
+            };
+
+            return .{ .bool = result };
+        },
     }
     return null;
 }

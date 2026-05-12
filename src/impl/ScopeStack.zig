@@ -43,6 +43,7 @@ pub const Scope = struct {
     }
 
     pub fn setStep(s: *Scope, name: []const u8, step: Builder.Block) void {
+        log.println("new step: {s}", .{name}, .Building);
         s.steps.put(name, step) catch @panic("PDM");
     }
 
@@ -73,6 +74,14 @@ pub const Scope = struct {
     pub fn getVariableValue(s: *Scope, name: []const u8) ?VariableValueRecord {
         return s.vars.get(name);
     }
+
+    pub fn print(s: Scope) void {
+        switch (s.ty) {
+            .block => |b| log.print("block[{x}]", .{@intFromPtr(b.ref)}, .Building),
+            .function => |b| log.print("func[{s}]", .{b}, .Building),
+            .global => log.print("[g]", .{}, .Building),
+        }
+    }
 };
 
 pub const ScopeStack = @This();
@@ -94,14 +103,28 @@ pub fn deinit(st: *ScopeStack, gpa: std.mem.Allocator) void {
 }
 
 pub fn enterScope(st: *ScopeStack, gpa: std.mem.Allocator, s: Scope) void {
-    log.println("entering scope: {}", .{s.ty}, .Building);
+    log.print("entering scope: ", .{}, .Building);
+    s.print();
+    log.ln(.Building);
     st.scopes.append(gpa, s) catch @panic("PDM");
+    st.printstack();
 }
 pub fn exitScope(st: *ScopeStack, gpa: std.mem.Allocator) void {
     if (st.scopes.items.len <= 1) @panic("Erreur interne: tentative de partir de la Scope Global");
     var scope = st.scopes.pop() orelse unreachable;
-    log.println("exiting scope: {}", .{scope.ty}, .Building);
+    log.print("exiting scope: ", .{}, .Building);
+    scope.print();
+    log.ln(.Building);
     scope.deinit(gpa);
+    st.printstack();
+}
+
+pub fn exitFunctionScope(st: *ScopeStack, gpa: std.mem.Allocator) void {
+    while (st.getCurrentScope().ty != .function) {
+        st.exitScope(gpa);
+    }
+
+    st.exitScope(gpa);
 }
 
 pub fn getGlobalScope(st: ScopeStack) *Scope {
@@ -151,6 +174,20 @@ pub fn getParentFunctionScopeName(st: ScopeStack) Error![]const u8 {
     //@panic("Erreur Interne: pas de Scope Function trouvé comme parent");
 }
 
+pub fn getParentFunctionScope(st: ScopeStack) Error!*Scope {
+    var i = st.scopes.items.len;
+    while (i > 0) {
+        i -= 1;
+        const scope = &st.scopes.items[i];
+        switch (scope.ty) {
+            .function => return scope,
+            else => continue,
+        }
+    }
+    return Error.NotInFunctionScope;
+    //@panic("Erreur Interne: pas de Scope Function trouvé comme parent");
+}
+
 pub fn getVariableRecord(st: *ScopeStack, name: []const u8) Error!VariableValueRecord {
     var i = st.scopes.items.len;
     while (i > 0) {
@@ -186,4 +223,12 @@ pub fn getStepRecord(st: *ScopeStack, name: []const u8) Error!Builder.Block {
     }
     log.println("Could not find step definition: {s}", .{name}, .Building);
     return Error.StepNotDefined;
+}
+
+pub fn printstack(st: *ScopeStack) void {
+    log.print("scopes: ", .{}, .Building);
+    for (st.scopes.items) |i| {
+        i.print();
+    }
+    log.ln(.Building);
 }

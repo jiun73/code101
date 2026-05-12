@@ -8,13 +8,10 @@ var line_prefix: []const u8 = const_buffer[0..0];
 
 pub const LogTy = enum { Traversal, Matching, MatchingVerbose, Building, Ops, Tokenize };
 
-const allowedLogs = [_]LogTy{ .Traversal, .Matching, .Building, .MatchingVerbose, .Ops };
+const allowedLogs: [std.meta.fields(LogTy).len]bool = [_]bool{false} ** std.meta.fields(LogTy).len;
 
 pub fn isAllowed(comptime ty: LogTy) bool {
-    for (allowedLogs) |all| {
-        if (all == ty) return true;
-    }
-    return false;
+    return allowedLogs[@intFromEnum(ty)];
 }
 
 pub fn print(comptime fmt: []const u8, args: anytype, comptime ty: LogTy) void {

@@ -34,9 +34,9 @@ pub const FunctionDefinition = struct {
     name: []const u8,
 
     pub fn findParamIndex(def: FunctionDefinition, name: []const u8) ?usize {
-        std.debug.print("{}\n", .{def.params.len});
+        //std.debug.print("{}\n", .{def.params.len});
         for (def.params, 0..) |param, i| {
-            std.debug.print("param {}: {s}\n", .{ param, param.name });
+            //std.debug.print("param {}: {s}\n", .{ param, param.name });
             if (std.mem.eql(u8, param.name, name)) return i;
         }
         return null;
@@ -68,6 +68,7 @@ sayFn: zllvm.Function,
 sayDbFn: zllvm.Function,
 sleepFn: zllvm.Function,
 askFn: zllvm.Function,
+printBoolFn: zllvm.Function,
 
 fmtS: zllvm.Value,
 fmtD: zllvm.Value,
@@ -77,6 +78,7 @@ pub fn init(gpa: std.mem.Allocator, module: zllvm.Module) Builder {
     const builder = zllvm.Builder.create();
 
     const printfFn = module.addFn("printf", .create(zllvm.Type.Int8(), &.{zllvm.Type.Int8().Ptr()}, true));
+    const printBoolFn = module.addFn("print_bool", .create(zllvm.Type.Int8(), &.{zllvm.Type.Int8().Ptr()}, true));
     const sqrtFn = module.addFn("llvm.sqrt.f64", .create(zllvm.Type.Double(), &.{zllvm.Type.Double()}, false));
     const cbrtFn = module.addFn("llvm.cbrt.f64", .create(zllvm.Type.Double(), &.{zllvm.Type.Double()}, false));
     const powFn = module.addFn("llvm.pow.f64", .create(zllvm.Type.Double(), &.{zllvm.Type.Double()}, false));
@@ -100,6 +102,7 @@ pub fn init(gpa: std.mem.Allocator, module: zllvm.Module) Builder {
     // const fndefs = std.StringHashMap(FunctionDefinition).init(gpa);
 
     return .{
+        .printBoolFn = printBoolFn,
         .printfFn = printfFn,
         .cbrtFn = cbrtFn,
         .powFn = powFn,
@@ -129,6 +132,24 @@ pub fn getVariableRaw(b: *Builder, var_name: []const u8) !Value {
     const record = try b.scopes.getVariableRecord(var_name);
 
     return record.value;
+
+    // const v = b.vars.get(var_name) orelse {
+    //     log.println("Variable '{s}' not found", .{var_name}, .Building);
+    //     return Error.VariableNotDeclared;
+    // };
+}
+
+pub fn setVariableValue(b: *Builder, var_name: []const u8, val: Value) !void {
+    const record = try b.scopes.getVariableRecord(var_name);
+
+    if (record.isPointerToValue) {
+        _ = try b.store(var_name, val);
+        return;
+    }
+
+    @panic("TODO");
+
+    //return record.value;
 
     // const v = b.vars.get(var_name) orelse {
     //     log.println("Variable '{s}' not found", .{var_name}, .Building);
@@ -183,9 +204,26 @@ pub fn add(b: *Builder, LHS: Value, RHS: Value) Value {
     return b.ir.fadd(LHS, RHS, "");
 }
 
+pub fn inc(b: *Builder, Var: Ref) !void {
+    log.println("inc", .{}, .Building);
+    const v = try b.getVariableValue(Var);
+    const res = b.ir.fadd(v, .constDouble(1), "");
+    try b.setVariableValue(Var, res);
+}
+
 pub fn sub(b: *Builder, LHS: Value, RHS: Value) Value {
     log.println("sub", .{}, .Building);
     return b.ir.fsub(LHS, RHS, "");
+}
+
+pub fn b_and(b: *Builder, LHS: Value, RHS: Value) Value {
+    log.println("and", .{}, .Building);
+    return b.ir.b_and(LHS, RHS, "");
+}
+
+pub fn b_or(b: *Builder, LHS: Value, RHS: Value) Value {
+    log.println("or", .{}, .Building);
+    return b.ir.b_or(LHS, RHS, "");
 }
 
 pub fn eq(b: *Builder, LHS: Value, RHS: Value) Value {
@@ -245,7 +283,7 @@ pub fn printString(b: *Builder, value: Value) void {
 }
 
 pub fn printBool(b: *Builder, value: Value) void {
-    _ = b.ir.call(b.printfFn, &.{ b.fmtB, value }, "");
+    _ = b.ir.call(b.printBoolFn, &.{value}, "");
 }
 
 pub fn printDecimal(b: *Builder, value: Value) void {
@@ -266,10 +304,10 @@ pub fn load(b: *Builder, ptr: Value) Value {
     return b.ir.load2(.Double(), ptr, "");
 }
 
-pub fn declare(b: *Builder, gpa: std.mem.Allocator, var_name: []const u8) Value {
+pub fn declare(b: *Builder, gpa: std.mem.Allocator, var_name: []const u8) !Value {
     log.println("declaration", .{}, .Building);
     const ptr = b.ir.allocaDupeZ(.Double(), var_name, gpa);
-    b.scopes.getCurrentScope().setVariableValuePtr(var_name, ptr);
+    (try b.scopes.getParentFunctionScope()).setVariableValuePtr(var_name, ptr);
     return ptr;
 }
 
@@ -339,17 +377,24 @@ pub fn cond(b: *Builder, gpa: std.mem.Allocator, condition: Value) !void {
     b.scopes.getCurrentScope().elseBlock = false_block;
 }
 
-pub fn br(b: *Builder, gpa: std.mem.Allocator, condition: Value) !void {
-    const fn_name = try b.scopes.getParentFunctionScopeName();
-    const record = try b.scopes.getFunctionRecord(fn_name);
-    const fun = record.body;
-    const true_block = fun.appendBasicBlock("true");
-    const false_block = fun.appendBasicBlock("false");
-    const then_block = fun.appendBasicBlock("then");
-    _ = b.ir.condBr(condition, true_block, false_block);
-    b.ir.positionAtEnd(true_block);
+pub fn br(b: *Builder, block: Block) void {
+    const current = b.ir.getInsertBlock();
+    const term = current.getTerminator();
 
-    b.scopes.getCurrentScope().nextBlock = then_block;
-    b.scopes.enterScope(gpa, .init(gpa, .{ .block = true_block }));
-    b.scopes.getCurrentScope().elseBlock = false_block;
+    if (term == null) {
+        _ = b.ir.br(block);
+    }
+}
+
+pub fn fetchStep(b: *Builder, gpa: std.mem.Allocator, name: []const u8) !Block {
+    const record = try b.scopes.getParentFunctionRecord();
+
+    return b.scopes.getStepRecord(name) catch {
+        const name_nt = gpa.dupeZ(u8, name) catch @panic("OOM");
+        defer gpa.free(name_nt);
+        const block = record.body.appendBasicBlock(name_nt);
+        const paren = try b.scopes.getParentFunctionScope();
+        paren.setStep(name, block);
+        return block;
+    };
 }

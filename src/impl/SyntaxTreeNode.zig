@@ -159,9 +159,14 @@ matching: Matcher = .any(), //if matchFns.len == 0 then node is considered 'virt
 //On annule en utlisant les branches, ou si one node est match, les tokens sont consommé comme normal
 deferConsume: bool = false,
 building: ?Builder = null, //Called when a node is matched
+virtual: bool = false,
 
 pub fn match(comptime str: []const u8) SyntaxTreeNode {
     return .{ .matching = .str(str) };
+}
+
+pub fn matchDefer(comptime str: []const u8) SyntaxTreeNode {
+    return .{ .matching = .str(str), .deferConsume = true };
 }
 
 fn printstack(loopbackStack: std.ArrayList(StackRef)) void {
@@ -377,7 +382,7 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
             }
         }
 
-        if (current.matched == 0 and current.node.matching.fns.len == 0) {
+        if ((current.matched == 0 and current.node.matching.fns.len == 0) or current.node.virtual) {
             if (tokenOffset > 0) log.println("defer cancel on error", .{}, .Traversal);
             tokenOffset = 0;
             backtrack: while (true) {

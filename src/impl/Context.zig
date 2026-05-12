@@ -16,7 +16,7 @@ const FnOrMain = union(enum) { main: void, fun: Builder.FunctionDefinition };
 
 progressNode: std.Progress.Node,
 gpa: std.mem.Allocator,
-counter: u32,
+counter: u32 = 0,
 
 source: []const u8,
 opStack: OpStack,
@@ -60,19 +60,19 @@ pub fn getPositionalInfo(data: []const u8, char: *const u8) struct { charnbr: us
 pub fn printLineError(ctx: *Context, char: *const u8) void {
     const pos = getPositionalInfo(ctx.source, char);
     const cnt = std.fmt.count("{c} ({}:{}) ", .{ char.*, pos.linenbr, pos.charnbr });
-    std.debug.print("{c} ({}:{}) {s}\n", .{ char.*, pos.linenbr, pos.charnbr, pos.line });
+    std.log.info("{c} ({}:{}) {s}\n", .{ char.*, pos.linenbr, pos.charnbr, pos.line });
     for (0..cnt) |_| {
-        std.debug.print("-", .{});
+        std.log.info("-", .{});
     }
     var view = std.unicode.Utf8View.init(pos.line) catch @panic("");
     var iter = view.iterator();
     var c: usize = 1;
     while (iter.nextCodepoint()) |_| {
         if (c >= pos.charnbr) break;
-        std.debug.print(" ", .{});
+        std.log.info(" ", .{});
         c += 1;
     }
-    std.debug.print("^ ici\n", .{});
+    std.log.info("^ ici\n", .{});
 }
 
 pub fn init(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8, module: zllvm.Module) Context {
@@ -126,7 +126,7 @@ pub fn buildAsk(ctx: *Context, var_name: []const u8) !void {
     defer ctx.gpa.free(var_name_nt);
     const var_name_str = ctx.builder.ir.globalStringPtr(var_name_nt, "var_name");
     log.print("{s}", .{var_name}, .Building);
-    const varn = ctx.builder.declare(ctx.gpa, var_name);
+    const varn = try ctx.builder.declare(ctx.gpa, var_name);
     const val = ctx.builder.ir.call(ctx.builder.askFn, &.{var_name_str}, "");
     _ = ctx.builder.ir.store(val, varn);
 }
@@ -177,6 +177,16 @@ pub fn buildConstPush(ctx: *Context, value_str: []const u8) !void {
     ctx.opStack.pushData(ctx.gpa, .{ .double = value });
 }
 
+pub fn buildTruePush(ctx: *Context) !void {
+    const value = zllvm.Value.constBool(1);
+    ctx.opStack.pushData(ctx.gpa, .{ .bool = value });
+}
+
+pub fn buildFalsePush(ctx: *Context) !void {
+    const value = zllvm.Value.constBool(0);
+    ctx.opStack.pushData(ctx.gpa, .{ .bool = value });
+}
+
 pub fn buildSleep(ctx: *Context, value_str: []const u8) !void {
     const value_int = std.fmt.parseInt(u32, value_str, 10) catch @panic("invalid");
     const value = zllvm.Value.constInt32(value_int);
@@ -224,16 +234,16 @@ pub fn doOpFn(comptime op: OpStack.Op) SyntaxTreeNode.BuildFnNoTokens {
     return T.fun;
 }
 
-pub fn buildRet(ctx: *Context) !void {
+pub fn buildRet2(ctx: *Context) !void {
     const fn_name = try ctx.builder.scopes.getParentFunctionScopeName();
     log.println("getting function from scope {s}", .{fn_name}, .Building);
     const fn_record = try ctx.builder.scopes.getFunctionRecord(fn_name);
     const block = ctx.builder.scopes.getParentBlock() catch return;
     const term = block.getTerminator();
-    ctx.builder.scopes.exitScope(ctx.gpa); //exit function scope
+    //ctx.builder.scopes.exitScope(ctx.gpa); //exit function scope
 
-    if (term.ref == null) {
-        ctx.builder.scopes.exitScope(ctx.gpa); //exit block scope
+    if (term == null) {
+        //ctx.builder.scopes.exitScope(ctx.gpa); //exit block scope
 
         if (std.mem.eql(u8, fn_name, "___main___")) {
             _ = ctx.builder.ir.ret(.constInt32(0));
@@ -251,17 +261,59 @@ pub fn buildRet(ctx: *Context) !void {
     }
 }
 
+pub fn buildRet(ctx: *Context) !void {
+    const fn_name = try ctx.builder.scopes.getParentFunctionScopeName();
+    log.println("getting function from scope {s}", .{fn_name}, .Building);
+    const fn_record = try ctx.builder.scopes.getFunctionRecord(fn_name);
+    const block = ctx.builder.scopes.getParentBlock() catch return;
+    const term = block.getTerminator();
+    ctx.builder.scopes.exitFunctionScope(ctx.gpa); //exit function scope
+
+    if (term == null) {
+        if (std.mem.eql(u8, fn_name, "___main___")) {
+            _ = ctx.builder.ir.ret(.constInt32(0));
+            return;
+        }
+
+        if (fn_record.def) |def| {
+            if (def.returnType == .Void) {
+                _ = ctx.builder.ir.retvoid();
+            } else {
+                const result = ctx.opStack.popValue(&ctx.builder) catch return;
+                _ = ctx.builder.ir.ret(result);
+            }
+        } else @panic("Aucune définition de fonction !");
+    }
+}
+
 pub fn startExpr(ctx: *Context) !void {
     ctx.opStack.pushOp(ctx.gpa, .{ .control = .Result });
 }
 
 pub fn endExpr(ctx: *Context) !void {
+    for (0..ctx.counter) |i| {
+        log.print("{}", .{i}, .Building);
+        try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
+    }
+
     try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
 }
 
 pub fn restartExpr(ctx: *Context) !void {
     try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
     ctx.opStack.pushOp(ctx.gpa, .{ .control = .Result });
+}
+
+pub fn restartExprOr(ctx: *Context) !void {
+    try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
+    ctx.opStack.pushOp(ctx.gpa, .{ .control = .Result });
+    ctx.opStack.pushOp(ctx.gpa, .{ .bool_ar = .Or });
+}
+
+pub fn restartExprAnd(ctx: *Context) !void {
+    try ctx.opStack.resolve(ctx.gpa, &ctx.builder);
+    ctx.opStack.pushOp(ctx.gpa, .{ .control = .Result });
+    ctx.opStack.pushOp(ctx.gpa, .{ .bool_ar = .And });
 }
 
 // pub fn buildSection(ctx: *Context, tokens: [][]const u8) !void {
@@ -371,7 +423,7 @@ pub fn buildCondition(ctx: *Context) !void {
 pub fn startElse(ctx: *Context) !void {
     const elseBlock = ctx.builder.scopes.getCurrentScope().elseBlock orelse @panic("Sinon invalide!");
     const thenBlock = try ctx.builder.scopes.getNextBlock();
-    _ = ctx.builder.ir.br(thenBlock);
+    ctx.builder.br(thenBlock);
     ctx.builder.scopes.exitScope(ctx.gpa);
     ctx.builder.scopes.enterScope(ctx.gpa, .init(ctx.gpa, .{ .block = elseBlock }));
     ctx.builder.ir.positionAtEnd(elseBlock);
@@ -379,7 +431,7 @@ pub fn startElse(ctx: *Context) !void {
 
 pub fn goNext(ctx: *Context) !void {
     const thenBlock = try ctx.builder.scopes.getNextBlock();
-    _ = ctx.builder.ir.br(thenBlock);
+    ctx.builder.br(thenBlock);
     ctx.builder.scopes.exitScope(ctx.gpa);
     ctx.builder.scopes.enterScope(ctx.gpa, .init(ctx.gpa, .{ .block = thenBlock }));
     ctx.builder.ir.positionAtEnd(thenBlock);
@@ -387,33 +439,29 @@ pub fn goNext(ctx: *Context) !void {
 
 pub fn restartBlock(ctx: *Context) !void {
     const currentBlock = try ctx.builder.scopes.getParentBlock();
-    _ = ctx.builder.ir.br(currentBlock);
+    ctx.builder.br(currentBlock);
 }
 
 pub fn startStepBlock(ctx: *Context, name: []const u8) !void {
-    const name_nt = ctx.gpa.dupeZ(u8, name) catch @panic("OOM");
-    defer ctx.gpa.free(name_nt);
-    const record = try ctx.builder.scopes.getParentFunctionRecord();
-
-    const stepBlock = ctx.builder.scopes.getStepRecord(name) catch record.body.appendBasicBlock(name_nt);
+    const stepBlock = try ctx.builder.fetchStep(ctx.gpa, name);
 
     t: {
         _ = ctx.builder.scopes.getParentBlock() catch break :t;
-        _ = ctx.builder.ir.br(stepBlock);
+        ctx.builder.br(stepBlock);
         ctx.builder.scopes.exitScope(ctx.gpa);
     }
     ctx.builder.ir.positionAtEnd(stepBlock);
-
-    ctx.builder.scopes.getCurrentScope().setStep(name, stepBlock);
     ctx.builder.scopes.enterScope(ctx.gpa, .init(ctx.gpa, .{ .block = stepBlock }));
 }
 
 pub fn gotoStep(ctx: *Context, name: []const u8) !void {
-    const name_nt = ctx.gpa.dupeZ(u8, name) catch @panic("OOM");
-    defer ctx.gpa.free(name_nt);
-    const record = try ctx.builder.scopes.getParentFunctionRecord();
-    const stepBlock = ctx.builder.scopes.getStepRecord(name) catch record.body.appendBasicBlock(name_nt);
+    const stepBlock = try ctx.builder.fetchStep(ctx.gpa, name);
     _ = ctx.builder.ir.br(stepBlock);
-    ctx.builder.ir.positionAtEnd(stepBlock);
-    ctx.builder.scopes.exitScope(ctx.gpa);
+    //ctx.builder.ir.positionAtEnd(stepBlock);
+    //ctx.builder.scopes.exitScope(ctx.gpa);
+}
+
+pub fn doInc(ctx: *Context, ref: []const u8) !void {
+    ctx.opStack.pushData(ctx.gpa, .{ .reference = ref });
+    try ctx.opStack.doOp(ctx.gpa, &ctx.builder, .{ .memory = .Increment });
 }

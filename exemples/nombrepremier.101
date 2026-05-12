@@ -3,10 +3,10 @@
 Prérequis:
 - x, un nombre réel;
 Résultat:
-vrai ou faux.
+un vrai ou faux.
 
 Étape 1:
-    si x est égal à 0 ou x est égal à 1 alors le résultat est faux, sinon déclarez un entier n égal à 2.
+    si x est égal à 0 ou x est égal à 1 alors le résultat est faux, sinon déclarer un nombre entier n égal à 2.
 
 Étape 2:
     si le reste de la division de x par n n'est pas égal à 0 alors incrémenter n et recommencer l'étape,

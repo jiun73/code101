@@ -14,6 +14,7 @@ pub fn init() void {
         null,
         5,
     );
+    _ = C.espeak_SetParameter(C.espeakRATE, 100, 0);
     _ = C.espeak_SetVoiceByName(default_voice);
     is_init = true;
 }
@@ -23,6 +24,10 @@ export fn say(text: [*:0]const u8) void {
         init();
     }
     _ = C.espeak_Synth(text, std.mem.len(text), 0, 0, 0, C.espeakCHARS_UTF8, null, null);
+}
+
+export fn print_bool(v: bool) void {
+    _ = C.printf("%s\n", if (v) "vrai" else "faux");
 }
 
 export fn say_double(v: f64) void {

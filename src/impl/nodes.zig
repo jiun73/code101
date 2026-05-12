@@ -117,6 +117,8 @@ const phrase_nt = SyntaxTreeNode{
     .debug = .label("phrase_nt"),
     .branches = &.{
         &.{
+            .next(expr_inc),
+            .leaf(expr_return_value),
             .leaf(expr_goto),
             .leaf(expr_restart),
             .next(expr_dire),
@@ -224,6 +226,15 @@ const expr_eval_cond = SyntaxTreeNode{
     },
 };
 
+const expr_return_value = SyntaxTreeNode{
+    .debug = .label("ret"),
+    .matching = .str("le résultat est"),
+    .branches = &.{
+        &.{.next(expression)},
+        &.{.build(.ctx(Context.buildRet2), .none)},
+    },
+};
+
 const expr_declarer = SyntaxTreeNode{
     .debug = .label("declare"),
     .matching = .str("déclarer un nombre entier [var] égal à"),
@@ -239,8 +250,9 @@ const expr_effectuer = SyntaxTreeNode{
     .building = .get(Context.startBuildCall, 6),
     .branches = &.{
         &.{
-            .detour(
+            .err(
                 .{
+                    .virtual = true,
                     .matching = .str("avec"),
                     .branches = &.{
                         &.{
@@ -254,8 +266,8 @@ const expr_effectuer = SyntaxTreeNode{
                         },
                         &.{
                             .build(.ctx(Context.buildCallParamValue), .detour),
-                            .restart(.match(",")),
-                            .next(.match("et")),
+                            .restart(.matchDefer(",")),
+                            .next(.matchDefer("et")),
                             .exit(),
                         },
                         &.{
@@ -272,6 +284,7 @@ const expr_effectuer = SyntaxTreeNode{
                         },
                     },
                 },
+                .detour,
             ),
             .build(.ctx(Context.buildCall), .none),
         },
@@ -294,6 +307,8 @@ const expression = SyntaxTreeNode{
             .loop(op_sqrt),
             .loop(op_rem),
             .next(variableRef),
+            .next(true_val),
+            .next(false_val),
             .next(constIntNode),
             .next(result),
         },
@@ -347,8 +362,8 @@ const conditional = SyntaxTreeNode{
             .next(expression),
         },
         &.{
-            .restart(.{ .deferConsume = true, .matching = .str("et"), .building = .ctx(Context.restartExpr) }),
-            .restart(.{ .deferConsume = true, .matching = .str("ou"), .building = .ctx(Context.restartExpr) }),
+            .restart(.{ .deferConsume = true, .matching = .str("et"), .building = .ctx(Context.restartExprAnd) }),
+            .restart(.{ .deferConsume = true, .matching = .str("ou"), .building = .ctx(Context.restartExprOr) }),
             .build(.ctx(Context.endExpr), .none),
         },
     },
@@ -439,6 +454,21 @@ pub const constIntNode = SyntaxTreeNode{
     .building = .get(Context.buildConstPush, 0),
 };
 
+pub const true_val = SyntaxTreeNode{
+    .matching = .str("vrai"),
+    .building = .ctx(Context.buildTruePush),
+};
+
+pub const false_val = SyntaxTreeNode{
+    .matching = .str("faux"),
+    .building = .ctx(Context.buildFalsePush),
+};
+
+pub const expr_inc = SyntaxTreeNode{
+    .matching = .str("incrémenter [var]"),
+    .building = .get(Context.doInc, 1),
+};
+
 pub const op_sqrt = SyntaxTreeNode{
     .matching = .str("la racine carrée de"),
     .building = .ctx(Context.pushOpFn(.{ .arithmetic = .{ .unary = .SquareRoot } })),
@@ -482,6 +512,7 @@ pub const section_param = SyntaxTreeNode{
         &.{
             .next(type_real),
             .next(type_integer),
+            .next(type_bool),
         },
         &.{
             .leaf(.{ .matching = .str(";"), .building = .ctx(Context.doOpFn(.{ .function_def = .PromoteToArgDef })) }),
@@ -493,10 +524,20 @@ pub const section_result = SyntaxTreeNode{
     .debug = .label("result"),
     .matching = .str("Résultat :"),
     .branches = &.{
-        &.{.next(type_real)},
+        &.{
+            .next(type_real),
+            .next(type_integer),
+            .next(type_bool),
+        },
         &.{.leaf(.{ .matching = .str(".") })},
         //&.{.build(.ctx(Context.buildFunctionResult), .leaf)},
     },
+};
+
+pub const type_bool = SyntaxTreeNode{
+    .debug = .label("bool"),
+    .building = .ctx(Context.pushType(.Bool)),
+    .matching = .str("un vrai ou faux"),
 };
 
 pub const type_integer = SyntaxTreeNode{

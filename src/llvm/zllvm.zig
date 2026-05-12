@@ -239,8 +239,10 @@ pub const Function = struct {
 pub const BasicBlock = struct {
     ref: types.LLVMBasicBlockRef,
 
-    pub fn getTerminator(t: BasicBlock) Value {
-        return .toZig(core.LLVMGetBasicBlockTerminator(t.toC()));
+    pub fn getTerminator(t: BasicBlock) ?Value {
+        const val = core.LLVMGetBasicBlockTerminator(t.toC());
+
+        if (val != null) return .toZig(val) else return null;
     }
 
     pub fn toZig(ref: types.LLVMBasicBlockRef) BasicBlock {
@@ -385,6 +387,10 @@ pub const Value = struct {
         return .toZig(core.LLVMConstInt(Type.Int64().toC(), value, 1));
     }
 
+    pub fn constBool(value: u1) Value {
+        return .toZig(core.LLVMConstInt(Type.Bool().toC(), value, 1));
+    }
+
     pub fn toString(v: Value) [*:0]const u8 {
         return core.LLVMPrintValueToString(v.toC());
     }
@@ -411,6 +417,10 @@ pub const Builder = struct {
 
     pub fn positionAtEnd(builder: Builder, block: BasicBlock) void {
         core.LLVMPositionBuilderAtEnd(builder.toC(), block.toC());
+    }
+
+    pub fn getInsertBlock(builder: Builder) BasicBlock {
+        return .toZig(core.LLVMGetInsertBlock(builder.toC()));
     }
 
     pub fn load2(builder: Builder, ty: Type, ptr: Value, name: [*:0]const u8) Value {
@@ -449,6 +459,14 @@ pub const Builder = struct {
 
     pub fn add(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
         return .toZig(core.LLVMBuildAdd(builder.toC(), LHS.toC(), RHS.toC(), retName));
+    }
+
+    pub fn b_and(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildAnd(builder.toC(), LHS.toC(), RHS.toC(), retName));
+    }
+
+    pub fn b_or(builder: Builder, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {
+        return .toZig(core.LLVMBuildOr(builder.toC(), LHS.toC(), RHS.toC(), retName));
     }
 
     pub fn fcmp(builder: Builder, op: types.LLVMRealPredicate, LHS: Value, RHS: Value, retName: [*:0]const u8) Value {

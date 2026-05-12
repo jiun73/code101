@@ -1,0 +1,27 @@
+--- section "est un nombre premier" ---
+
+Prérequis:
+- x, un nombre réel;
+Résultat:
+un vrai ou faux.
+
+Étape 1:
+    afficher la valeur de x. si x est égal à 0 ou x est égal à 1 alors le résultat est faux, sinon déclarer un nombre entier n égal à 2.
+
+Étape 2:
+    afficher la valeur de n. si la racine carrée de x est plus petit que n alors le résultat est vrai, sinon aller à l'étape 3.
+
+Étape 3:
+    si le reste de la division de x par n n'est pas égal à 0 alors incrémenter n et aller à l'étape 2, sinon le résultat est faux.
+
+--- ---
+
+--- section principale ---
+
+Tout d'abord, dire "Déterminer si un nombre est premier!".
+Ensuite, demander un nombre réel i et
+effectuer les étapes de la section "est un nombre premier" avec x égal à i, puis
+afficher le résultat.
+
+--- ---
+
