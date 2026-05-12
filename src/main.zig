@@ -2,6 +2,34 @@ const std = @import("std");
 const zllvm = @import("zllvm");
 const impl = @import("impl");
 
+// Déclaration de la structure d'options globale pour le package root
+pub const std_options: std.Options = .{
+    .logFn = myLogFn,
+};
+
+// Fonction de journalisation personnalisée compatible Zig 0.15.2
+fn myLogFn(
+    comptime level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    _ = level;
+    _ = scope;
+
+    // 1. Ouvrir le fichier de sortie d'erreur standard via le descripteur brut POSIX
+    const file = std.fs.File{ .handle = std.posix.STDERR_FILENO };
+
+    // 2. Passer obligatoirement un tampon à la fonction writer()
+    // Ici, un tableau vide '&.{}' désactive la mise en tampon pour envoyer le texte immédiatement
+    var file_writer = file.writer(&.{});
+
+    // 3. Utiliser le champ '.interface' pour accéder à la méthode print
+    file_writer.interface.print(format, args) catch {
+        return;
+    };
+}
+
 pub fn compile(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: []const u8) !zllvm.Module {
     var tokens = try impl.Tokenizer.tokenize(gpa, progressNode, source);
     defer tokens.deinit(gpa);
@@ -25,6 +53,32 @@ pub fn readFile(buffer: []u8, path: []const u8) ![]const u8 {
     };
 }
 
+pub fn toAsm(module: zllvm.Module, output: [:0]const u8) void {
+    const triple = zllvm.TargetMachine.getDefaultTargetTriple();
+    defer zllvm.disposeMessage(triple); // Libération requise par LLVM
+
+    const trg = zllvm.Target.getFromTriple(triple);
+
+    const cpu = zllvm.TargetMachine.getHostCPUName();
+    defer zllvm.disposeMessage(cpu); // Libération requise par LLVM
+
+    const cpu_features = zllvm.TargetMachine.getHostCPUFeatures();
+    defer zllvm.disposeMessage(cpu_features); // Libération requise par LLVM
+
+    const target_machine = zllvm.TargetMachine.create(trg, triple, cpu, cpu_features, .LLVMCodeGenLevelNone, .LLVMRelocPIC, .LLVMCodeModelDefault);
+    defer target_machine.dispose(); // Ne pas oublier de détruire la machine cible
+
+    // Correction : Utilisation du pointeur brut (.ptr) pour l'interopérabilité C
+    // Note : Selon l'implémentation de zllvm, EmitToFile peut renvoyer un booléen d'erreur à vérifier
+    _ = target_machine.EmitToFile(module, output, .LLVMObjectFile);
+
+    // Note de logique LLVM : Un PassManager vide exécuté APRÈS l'émission du fichier
+    // n'a aucun effet et peut causer un comportement indéfini si le module a été altéré.
+    const pm = zllvm.PassManager.create();
+    defer pm.dispose();
+    _ = pm.run(module);
+}
+
 const buffer_size = 1024 * 1024;
 var const_buffer: [buffer_size]u8 = [_]u8{undefined} ** buffer_size;
 
@@ -38,12 +92,13 @@ pub fn main() !void {
     if (full_args.len == 0) return;
     var args = full_args[1..];
 
-    std.log.info("code101", .{});
-    std.log.info("LLVM: {}", .{zllvm.getVersion()});
+    std.log.info("code101\n", .{});
+    //std.log.info("LLVM: {}", .{zllvm.getVersion()});
 
     var input_path_opt: ?[]const u8 = null;
     var output_path_opt: ?[]const u8 = null;
     var run: bool = false;
+    var llvm: bool = false;
     var accept_input: bool = true;
     var consumed: usize = 0;
 
@@ -61,7 +116,7 @@ pub fn main() !void {
 
         if (std.mem.eql(u8, args[0], "-s")) {
             if (args.len < 2) {
-                std.log.err("argument de sortie attendu", .{});
+                std.log.err("argument de sortie attendu\n", .{});
                 return;
             }
 
@@ -72,11 +127,47 @@ pub fn main() !void {
             continue;
         }
 
+        if (std.mem.eql(u8, args[0], "--arbre")) {
+            impl.log.setLogTy(.Tree);
+            args = args[1..];
+            consumed += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, args[0], "--llvm") and !run) {
+            llvm = true;
+            args = args[1..];
+            consumed += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, args[0][0..3], "--V")) {
+            const flags = args[0][3..];
+            for (flags) |c| {
+                switch (c) {
+                    'c' => impl.log.setLogTy(.Building),
+                    'o' => impl.log.setLogTy(.Ops),
+                    'm' => impl.log.setLogTy(.Matching),
+                    'M' => impl.log.setLogTy(.MatchingVerbose),
+                    's' => impl.log.setLogTy(.Scopes),
+                    'j' => impl.log.setLogTy(.Tokenize),
+                    else => {
+                        std.log.err("argument invalide\n", .{});
+                        return;
+                    },
+                }
+            }
+
+            args = args[1..];
+            consumed += 1;
+            continue;
+        }
+
         if (accept_input) {
             input_path_opt = args[0];
             accept_input = false;
         } else {
-            std.log.err("argument invalide", .{});
+            std.log.err("argument invalide\n", .{});
             return;
         }
 
@@ -85,11 +176,11 @@ pub fn main() !void {
     }
 
     const input_path = input_path_opt orelse {
-        std.log.err("aucune entrée fournie. fin du programme.", .{});
+        std.log.err("aucune entrée fournie. fin du programme.\n", .{});
         return;
     };
 
-    const output_path = if (output_path_opt != null) output_path_opt.? else "sortie.ll";
+    var output_path = if (output_path_opt != null) output_path_opt.? else "sortie";
 
     zllvm.initializeNativeTarget();
     zllvm.initializeAllTargetInfos();
@@ -100,28 +191,39 @@ pub fn main() !void {
     const source = try readFile(&const_buffer, input_path);
     const module = try compile(gpa, progressNode, source);
 
-    std.log.info("compilation effectué avec succès", .{});
+    std.log.info("compilation effectué avec succès\n", .{});
 
     if (run) {
-        std.log.info("liaison de la librarie espeak", .{});
+        std.log.info("liaison de la librarie espeak\n", .{});
         _ = zllvm.support.LLVMLoadLibraryPermanently(null);
         try zllvm.loadLibraryPermanently("libespeak-ng.so");
 
         const file = @embedFile("code101_lib");
         const espeak_bds = try zllvm.parseBc(.fromSlice(file, "lib.bc"));
         try module.link(espeak_bds);
-        std.log.info("création de l'engin d'éxécution", .{});
+        std.log.info("création de l'engin d'éxécution\n", .{});
         const exec = try zllvm.ExecutionEngine.createMCJITForModule(module);
         //exec.runStaticConstructors();
         const main_fn = exec.findFunction("main");
-        std.log.info("exécution...", .{});
+        std.log.info("exécution...\n", .{});
         _ = exec.runFunctionAsMain(main_fn, 0, &.{});
     } else {
         if (output_path_opt == null) {
-            std.log.info("chemin de sortie non spécifié. utilisation de la sortie par défaut", .{});
+            output_path = if (llvm) "sortie.ll" else "sortie.o";
+            std.log.info("chemin de sortie non spécifié. utilisation de la sortie par défaut\n", .{});
         }
         const out_nt = gpa.dupeZ(u8, output_path) catch @panic("OOM");
-        module.printToFile(out_nt);
+        if (llvm) {
+            module.printToFile(out_nt);
+        } else {
+            const file = @embedFile("code101_lib");
+            const espeak_bds = try zllvm.parseBc(.fromSlice(file, "lib.bc"));
+            try module.link(espeak_bds);
+            zllvm.initializeNativeAsmPrinter();
+            toAsm(module, out_nt);
+            std.log.info("fichier object créé\n", .{});
+            std.log.info("'clang sortie.o -lespeak-ng -lm -o sortie.exe' pour créer un exécutable\n", .{});
+        }
         gpa.free(out_nt);
     }
 }

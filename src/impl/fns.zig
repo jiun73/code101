@@ -5,7 +5,10 @@ const SyntaxTreeNode = @import("SyntaxTreeNode.zig");
 pub fn matchConstTokens(comptime const_tokens: []const []const u8) SyntaxTreeNode.MatchFn {
     const Ret = struct {
         fn f(tokens: []const []const u8) SyntaxTreeNode.MatchFnRet {
-            if (tokens.len < const_tokens.len) return .{ .false = .outOfTokens };
+            if (tokens.len < const_tokens.len) {
+                log.print("oot", .{}, .MatchingVerbose);
+                return .{ .false = .outOfTokens };
+            }
             for (const_tokens, 0..) |const_token, i| {
                 log.print("{s}[{s}] ", .{ tokens[i], const_token }, .MatchingVerbose);
                 if (!std.mem.eql(u8, const_token, tokens[i])) return .{ .false = .{ .indexDoesNotMatch = i } };

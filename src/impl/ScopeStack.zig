@@ -103,20 +103,16 @@ pub fn deinit(st: *ScopeStack, gpa: std.mem.Allocator) void {
 }
 
 pub fn enterScope(st: *ScopeStack, gpa: std.mem.Allocator, s: Scope) void {
-    log.print("entering scope: ", .{}, .Building);
-    s.print();
-    log.ln(.Building);
     st.scopes.append(gpa, s) catch @panic("PDM");
+    log.print("entering scope: ", .{}, .Scopes);
     st.printstack();
 }
 pub fn exitScope(st: *ScopeStack, gpa: std.mem.Allocator) void {
     if (st.scopes.items.len <= 1) @panic("Erreur interne: tentative de partir de la Scope Global");
     var scope = st.scopes.pop() orelse unreachable;
-    log.print("exiting scope: ", .{}, .Building);
-    scope.print();
-    log.ln(.Building);
-    scope.deinit(gpa);
+    log.print("exiting scope: ", .{}, .Scopes);
     st.printstack();
+    scope.deinit(gpa);
 }
 
 pub fn exitFunctionScope(st: *ScopeStack, gpa: std.mem.Allocator) void {
@@ -205,7 +201,7 @@ pub fn getFunctionRecord(st: *ScopeStack, name: []const u8) Error!FunctionRecord
         const scope = &st.scopes.items[i];
         return scope.getFunction(name) orelse continue;
     }
-    log.println("Could not find function definition: {s}", .{name}, .Building);
+    log.println("Could not find function definition: {s}", .{name}, .Scopes);
     return Error.FunctionNotDefined;
 }
 
@@ -221,14 +217,14 @@ pub fn getStepRecord(st: *ScopeStack, name: []const u8) Error!Builder.Block {
         const scope = &st.scopes.items[i];
         return scope.getStep(name) orelse continue;
     }
-    log.println("Could not find step definition: {s}", .{name}, .Building);
+    log.println("Could not find step definition: {s}", .{name}, .Scopes);
     return Error.StepNotDefined;
 }
 
 pub fn printstack(st: *ScopeStack) void {
-    log.print("scopes: ", .{}, .Building);
+    log.print("scopes: ", .{}, .Scopes);
     for (st.scopes.items) |i| {
         i.print();
     }
-    log.ln(.Building);
+    log.ln(.Scopes);
 }

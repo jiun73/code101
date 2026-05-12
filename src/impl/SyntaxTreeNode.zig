@@ -206,7 +206,7 @@ fn tab(stack: []const StackRef, connect: bool) void {
 pub fn isMatch(node: SyntaxTreeNode, tokens: []const []const u8) MatchFnRet {
     //if (node.matchFns.len == 0) return .{ .true = .match };
     if (node.debug) |debug| {
-        log.println("matching '{s}' ", .{debug.lbl}, .MatchingVerbose);
+        log.print("matching '{s}' ", .{debug.lbl}, .MatchingVerbose);
     }
 
     var result_tokens = tokens;
@@ -217,7 +217,7 @@ pub fn isMatch(node: SyntaxTreeNode, tokens: []const []const u8) MatchFnRet {
             .true => |trueval| switch (trueval) {
                 .consume => |consumed| {
                     total_consumed += consumed;
-                    log.print("({})", .{consumed}, .MatchingVerbose);
+                    log.print("({})\t", .{consumed}, .MatchingVerbose);
                     result_tokens = result_tokens[consumed..];
                 },
                 .match => {},
@@ -229,11 +229,16 @@ pub fn isMatch(node: SyntaxTreeNode, tokens: []const []const u8) MatchFnRet {
         }
     }
 
-    log.print("\"", .{}, .Matching);
-    for (tokens[0..total_consumed]) |value| {
-        log.print("{s} ", .{value}, .Matching);
+    if (node.matching.fns.len > 0) {
+        log.print("/", .{}, .Matching);
+        for (tokens[0..total_consumed], 0..) |value, i| {
+            log.print("{s}", .{value}, .Matching);
+            if (i != total_consumed - 1) {
+                log.print(" ", .{}, .Matching);
+            }
+        }
+        log.print("/", .{}, .Matching);
     }
-    log.print("\"", .{}, .Matching);
 
     log.print(" => Y", .{}, .MatchingVerbose);
     log.ln(.Matching);
@@ -270,7 +275,7 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
                 _ = stack.pop();
                 if (!first) {
                     tab(stack.items[0..stack.items.len], true);
-                    log.println("┘", .{}, .Traversal);
+                    log.println("┘", .{}, .Tree);
                 } else {
                     first = false;
                 }
@@ -287,7 +292,7 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
 
                 if (branch.cancelDeferOffset) {
                     tokenOffset = 0;
-                    log.println("cancelled defer", .{}, .Traversal);
+                    log.println("cancelled defer", .{}, .Matching);
                 }
 
                 switch (action) {
@@ -300,35 +305,35 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
                     .restart => {
                         previous.group_i = 0;
                         previous.branch_i = std.math.maxInt(usize);
-                        log.println("#", .{}, .Traversal);
+                        log.println("#", .{}, .Tree);
                         continue :loop;
                     },
                     .last => {
                         previous.group_i = previous.node.branches.len - 1;
                         previous.branch_i = std.math.maxInt(usize);
-                        log.println("*", .{}, .Traversal);
+                        log.println("*", .{}, .Tree);
                         continue :loop;
                     },
                     .detour => {
-                        log.println("║", .{}, .Traversal);
+                        log.println("║", .{}, .Tree);
                         //stack.items[stack.items.len - 1].node_i -= 1;
                         continue :loop;
                     },
                     .loop => {
-                        log.println("@", .{}, .Traversal);
+                        log.println("@", .{}, .Tree);
                         previous.branch_i = std.math.maxInt(usize);
                         continue :loop;
                     },
                     .next => |n| {
                         previous.group_i += 1 + n;
                         previous.branch_i = std.math.maxInt(usize);
-                        log.println("{}", .{stack.items[stack.items.len - 1].group_i}, .Traversal);
+                        log.println("{}", .{stack.items[stack.items.len - 1].group_i}, .Tree);
                         continue :loop;
                     },
                     .prev => |n| {
                         previous.group_i -= 1 + n;
                         previous.branch_i = std.math.maxInt(usize);
-                        log.println("{}", .{stack.items[stack.items.len - 1].group_i}, .Traversal);
+                        log.println("{}", .{stack.items[stack.items.len - 1].group_i}, .Tree);
                         continue :loop;
                     },
                 }
@@ -360,11 +365,11 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
 
                     if (next.ptr.deferConsume) {
                         tokenOffset += matched_tokens.len;
-                        log.println("defer {}", .{tokenOffset}, .Traversal);
+                        log.println("defer {}", .{tokenOffset}, .Matching);
                     } else {
                         if (matched_tokens.len > 0) {
                             tokens = tokens[tokenOffset + consumed_count ..];
-                            if (tokenOffset > 0) log.println("defer end", .{}, .Traversal);
+                            if (tokenOffset > 0) log.println("defer end", .{}, .Matching);
                             tokenOffset = 0;
                         }
                     }
@@ -372,7 +377,7 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
                     stack.items[stack.items.len - 1].branch_i = i;
                     if (next.ptr.branches.len > 0) {
                         tab(stack.items, true);
-                        log.println("{s}", .{if (next.ptr.debug) |debug| debug.lbl else "┐"}, .Traversal);
+                        log.println("{s}", .{if (next.ptr.debug) |debug| debug.lbl else "┐"}, .Tree);
                     }
 
                     stack.append(gpa, .{ .node = next.ptr }) catch @panic("OOM");
@@ -383,16 +388,19 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
         }
 
         if ((current.matched == 0 and current.node.matching.fns.len == 0) or current.node.virtual) {
-            if (tokenOffset > 0) log.println("defer cancel on error", .{}, .Traversal);
+            if (tokenOffset > 0) log.println("defer cancel on error", .{}, .Matching);
             tokenOffset = 0;
             backtrack: while (true) {
-                tab(stack.items, false);
                 const prev = stack.pop() orelse break;
+                tab(stack.items, false);
+                log.println("X", .{}, .Tree);
+                tab(stack.items, true);
+                log.println("┘", .{}, .Tree);
                 const last = &stack.items[stack.items.len - 1];
                 const branch = last.node.branches[last.group_i][last.branch_i];
-                log.println("no match: virtual node, so returning to {s} ({})", .{ if (last.node.debug) |dgb| dgb.lbl else "?", branch.allowError }, .Traversal);
-                log.println("err:{} action:{} matched:{}", .{ branch.allowError, branch.afterAction, last.matched }, .Traversal);
-                log.println("{}:{}", .{ last.group_i, last.branch_i }, .Traversal);
+                //log.println("no match: virtual node, so returning to {s} ({})", .{ if (last.node.debug) |dgb| dgb.lbl else "?", branch.allowError }, .Traversal);
+                //log.println("err:{} action:{} matched:{}", .{ branch.allowError, branch.afterAction, last.matched }, .Traversal);
+                //log.println("{}:{}", .{ last.group_i, last.branch_i }, .Traversal);
                 if (branch.afterAction != .detour and !branch.allowError and prev.matched <= 1) {
                     last.matched = 0;
                     continue :backtrack;
@@ -402,7 +410,7 @@ pub fn traverse(start_node: SyntaxTreeNode, ctx: *Context, gpa: std.mem.Allocato
             continue :loop;
         }
 
-        std.debug.print("\n\nErreur de compilation!\n", .{});
+        std.log.err("\n\nErreur de compilation!\n", .{});
         ctx.printLineError(@ptrCast(tokens[0].ptr));
         return MatchError.DoesNotMatch;
     }

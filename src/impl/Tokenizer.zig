@@ -67,17 +67,17 @@ pub fn tokenize(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source:
     var cfam: ?*const CharFamilyType = getFamily(codepoints[0]);
 
     //log.println("char: {s}", .{codepoints[0..1]}, .Tokenize);
-    log.println("fam: '{any}'", .{cfam}, .Tokenize);
+    //log.println("fam: '{any}'", .{cfam}, .Tokenize);
 
     while (i < codepoints.len) {
         const c = codepoints[i];
 
-        log.println("char: '{s}' ", .{c}, .Tokenize);
+        //log.println("char: '{s}' ", .{c}, .Tokenize);
 
         const fam = getFamily(c);
 
         if (fam == null) {
-            log.println("code: {s} {x}", .{ c, i }, .Tokenize);
+            //log.println("code: {s} {x}", .{ c, i }, .Tokenize);
             return TokenizerError.InvalidChar;
         }
 

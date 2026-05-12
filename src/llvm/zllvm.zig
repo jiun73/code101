@@ -13,7 +13,6 @@ pub const support = cllvm.support;
 pub const error_handling = cllvm.error_handling;
 pub const errors = cllvm.errors;
 pub const target_machine = cllvm.target_machine;
-pub const util = @import("llvm.util.zig");
 
 pub const Error = error{
     loadLibraryPermanentlyError,
@@ -23,6 +22,10 @@ pub const Error = error{
 };
 
 pub const Version = struct { major: c_uint, minor: c_uint, patch: c_uint };
+
+pub fn disposeMessage(m: [*:0]const u8) void {
+    core.LLVMDisposeMessage(@ptrCast(@constCast(m)));
+}
 
 pub fn getVersion() Version {
     var version: Version = undefined;
@@ -590,14 +593,22 @@ pub const TargetMachine = struct {
         );
     }
 
+    pub fn dispose(tm: TargetMachine) void {
+        return cllvm.target_machine.LLVMDisposeTargetMachine(tm.toC());
+    }
+
     pub fn EmitToFile(tm: TargetMachine, module: Module, outfile: [:0]const u8, codegen: CodeGenFileType) void {
-        _ = cllvm.target_machine.LLVMTargetMachineEmitToFile(
+        var outm: [*c]u8 = undefined;
+
+        if (cllvm.target_machine.LLVMTargetMachineEmitToFile(
             tm.toC(),
             module.toC(),
             outfile,
             codegen,
-            null,
-        );
+            &outm,
+        ) != 0) {
+            std.debug.print("{s}\n", .{std.mem.span(outm)});
+        }
     }
 };
 
@@ -614,6 +625,10 @@ pub const PassManager = struct {
 
     pub fn create() PassManager {
         return .toZig(cllvm.core.LLVMCreatePassManager());
+    }
+
+    pub fn dispose(pm: PassManager) void {
+        cllvm.core.LLVMDisposePassManager(pm.toC());
     }
 
     pub fn run(pm: PassManager, module: Module) void {

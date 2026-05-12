@@ -6,9 +6,13 @@ var const_buffer: [buffer_size]u8 = [_]u8{undefined} ** buffer_size;
 var add_prefix = true;
 var line_prefix: []const u8 = const_buffer[0..0];
 
-pub const LogTy = enum { Traversal, Matching, MatchingVerbose, Building, Ops, Tokenize };
+pub const LogTy = enum { Tree, Matching, MatchingVerbose, Building, Ops, Tokenize, Scopes };
 
-const allowedLogs: [std.meta.fields(LogTy).len]bool = [_]bool{false} ** std.meta.fields(LogTy).len;
+var allowedLogs: [std.meta.fields(LogTy).len]bool = [_]bool{false} ** std.meta.fields(LogTy).len;
+
+pub fn setLogTy(ty: LogTy) void {
+    allowedLogs[@intFromEnum(ty)] = true;
+}
 
 pub fn isAllowed(comptime ty: LogTy) bool {
     return allowedLogs[@intFromEnum(ty)];
@@ -16,7 +20,7 @@ pub fn isAllowed(comptime ty: LogTy) bool {
 
 pub fn print(comptime fmt: []const u8, args: anytype, comptime ty: LogTy) void {
     if (!isAllowed(ty)) return;
-    if (add_prefix == true) {
+    if (allowedLogs[0] and add_prefix == true) {
         std.debug.print("{s}", .{line_prefix});
         add_prefix = false;
     }
