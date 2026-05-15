@@ -43,14 +43,7 @@ pub fn compile(gpa: std.mem.Allocator, progressNode: std.Progress.Node, source: 
 }
 
 pub fn readFile(buffer: []u8, path: []const u8) ![]const u8 {
-    return std.fs.cwd().readFile(path, buffer) catch |err| {
-        switch (err) {
-            error.FileNotFound => std.log.err("Fichier introuvable", .{}),
-            error.FileTooBig => std.log.err("Fichier trop volumineux", .{}),
-            else => std.log.err("Erreur inattendu", .{}),
-        }
-        return err;
-    };
+    return std.fs.cwd().readFile(path, buffer);
 }
 
 pub fn toAsm(module: zllvm.Module, output: [:0]const u8) void {
@@ -188,8 +181,22 @@ pub fn main() !void {
 
     const progressNode = std.Progress.start(.{ .root_name = "Compilation" });
 
-    const source = try readFile(&const_buffer, input_path);
-    const module = try compile(gpa, progressNode, source);
+    const source = readFile(&const_buffer, input_path) catch |err| {
+        switch (err) {
+            error.IsDir => std.log.err("Le chemin fourni est un dossier\n", .{}),
+            error.FileTooBig => std.log.err("Fichier trop volumineux!\n", .{}),
+            error.FileNotFound => std.log.err("Fichier inexistant!\n", .{}),
+            else => std.log.err("Erreur inattendue pendant la lecture du fichier\n", .{}),
+        }
+        return;
+    };
+    const module = compile(gpa, progressNode, source) catch |err| {
+        switch (err) {
+            error.DoesNotMatch => std.log.err("Erreur de syntaxe!\n", .{}),
+            else => std.log.err("Erreur de compilation\n", .{}),
+        }
+        return;
+    };
 
     std.log.info("compilation effectué avec succès\n", .{});
 
@@ -205,7 +212,7 @@ pub fn main() !void {
         const exec = try zllvm.ExecutionEngine.createMCJITForModule(module);
         //exec.runStaticConstructors();
         const main_fn = exec.findFunction("main");
-        std.log.info("exécution...\n", .{});
+        std.log.info("exécution...\n\n", .{});
         _ = exec.runFunctionAsMain(main_fn, 0, &.{});
     } else {
         if (output_path_opt == null) {
